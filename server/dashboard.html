@@ -50,6 +50,14 @@
   .techgrid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-top:12px; }
   .sub { color:var(--muted); font-size:12.5px; margin-top:2px; }
   #detail dt.group { grid-column:1/-1; color:var(--fg); font-weight:600; margin-top:8px; }
+  #chats tr.grp td { background:var(--bg); font-weight:600; cursor:pointer; border-top:1px solid var(--line); }
+  #chats tr.grp:hover td { background:var(--accent-bg); }
+  #chats tr.grp .caret { display:inline-block; width:1.2em; color:var(--muted); }
+  #chats tr.grp .meta { color:var(--muted); font-weight:normal; margin-left:8px; font-size:12.5px; }
+  #chats tr.ingrp td:first-child { padding-left:28px; }
+  #chats.grouped th:nth-child(2), #chats.grouped tr:not(.grp) td:nth-child(2) { display:none; }
+  #chats .ttl { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  #chats tr:not(.grp) td:nth-child(n+3), #chats th { white-space:nowrap; }
   #login { max-width:360px; margin:12vh auto 0; }
   #login label { display:block; margin:10px 0 4px; color:var(--muted); }
   #login input { width:100%; }
@@ -95,6 +103,8 @@
         <div class="toolbar">
           <input id="filter" placeholder="Suchen: Titel, Projektordner, Modell" size="36">
           <label title="In der App geloeschte Chats sowie aeltere oder im Terminal gefuehrte Sitzungen. Ihre Transkripte liegen noch auf der Platte und werden mit synchronisiert."><input id="showAll" type="checkbox"> <span id="showAllText">weitere Transkripte zeigen</span></label>
+          <label><input id="groupBy" type="checkbox" checked> nach Projektordner gruppieren</label>
+          <span id="groupBtns"><button type="button" id="openAll">alle auf</button> <button type="button" id="closeAll">alle zu</button></span>
           <span id="count" class="muted"></span>
         </div>
         <table id="chats"><thead><tr>
@@ -171,6 +181,7 @@ const row = (dt, dd, cls = '') => `<dt>${esc(dt)}</dt><dd class="${cls}">${dd}</
 const say = (el, text, kind = 'bad') => { el.textContent = text || ''; el.className = 'msg ' + kind; };
 
 let me = null, data = null, sortKey = 'lastActivityAt', sortDir = -1, selected = null, viewUser = null;
+const openGroups = new Set();
 
 async function api(method, p, body) {
   const r = await fetch(p, { method, headers: { 'x-clyde': '1', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -221,6 +232,13 @@ $('#reload').addEventListener('click', () => loadSnapshots());
 $('#snap').addEventListener('change', () => loadSnapshot($('#snap').value));
 $('#filter').addEventListener('input', render);
 $('#showAll').addEventListener('change', render);
+// Gruppierung merken (nur in diesem Browser)
+try { const v = localStorage.getItem('clydeGroupBy'); if (v !== null) $('#groupBy').checked = v === '1'; } catch {}
+const syncGroupBtns = () => { $('#groupBtns').hidden = !$('#groupBy').checked; };
+syncGroupBtns();
+$('#groupBy').addEventListener('change', () => { try { localStorage.setItem('clydeGroupBy', $('#groupBy').checked ? '1' : '0'); } catch {} syncGroupBtns(); render(); });
+$('#openAll').addEventListener('click', () => { if (!data) return; const all = $('#showAll').checked; groupRows(data.chats.filter((c) => all || c.kind === 'app').map((c) => ({ ...c, size: c.transcript ? c.transcript.size : 0 }))).forEach((g) => openGroups.add(g.key)); render(); });
+$('#closeAll').addEventListener('click', () => { openGroups.clear(); render(); });
 document.querySelectorAll('#chats th').forEach((th) => th.addEventListener('click', () => {
   const k = th.dataset.k; if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = ['title', 'cwdShown', 'model'].includes(k) ? 1 : -1; } render();
 }));
@@ -272,16 +290,60 @@ function render() {
     .filter((c) => !f || [c.title, c.cwdShown, c.model, c.cliSessionId, c.sessionId, c.transcript && c.transcript.projectShown].some((v) => v && String(v).toLowerCase().includes(f)))
     .sort((a, b) => { const x = a[sortKey], y = b[sortKey]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (typeof x === 'string' ? x.localeCompare(y, 'de') : x - y) * sortDir; });
   $('#count').textContent = f ? `${rows.length} Treffer` : '';
-  $('#chats tbody').innerHTML = rows.length ? rows.map((c) => {
+  const grouped = $('#groupBy').checked;
+  $('#chats').classList.toggle('grouped', grouped);
+  const chatRow = (c, inGroup) => {
     const tags = (c.isArchived ? '<span class="tag">archiviert</span>' : '') + (c.sidebar && !c.transcript ? '<span class="tag warn">kein Transkript</span>' : '');
     const sub = kindLabel(c);
-    return `<tr data-id="${esc(c.cliSessionId || c.sessionId)}" class="${selected === (c.cliSessionId || c.sessionId) ? 'sel' : ''}">
-    <td>${c.title ? esc(c.title) : '<span class="muted">(ohne Titel)</span>'} ${tags}${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</td>
-    <td class="mono">${esc(c.cwdShown || (c.transcript ? c.transcript.projectShown : ''))}</td>
+    return `<tr data-id="${esc(c.cliSessionId || c.sessionId)}" class="${inGroup ? 'ingrp ' : ''}${selected === (c.cliSessionId || c.sessionId) ? 'sel' : ''}">
+    <td>${c.title ? `<span class="ttl" title="${esc(c.title)}">${esc(c.title)}</span>` : '<span class="muted">(ohne Titel)</span>'} ${tags}${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</td>
+    <td class="mono">${inGroup ? '' : esc(c.cwdShown || (c.transcript ? c.transcript.projectShown : ''))}</td>
     <td>${esc((c.model || '').replace(/^claude-/, ''))}</td><td>${esc(fmtTime(c.lastActivityAt))}</td>
     <td class="num">${c.transcript ? fmtMB(c.transcript.size) + ' MB' : ''}</td></tr>`;
-  }).join('') : `<tr><td colspan="5" class="muted">${data.counts.app ? 'Keine Treffer.' : 'Keine Chats in der App in diesem Stand.'}</td></tr>`;
-  document.querySelectorAll('#chats tbody tr').forEach((tr) => tr.addEventListener('click', () => { selected = tr.dataset.id; render(); renderDetail(); }));
+  };
+  let html;
+  if (!rows.length) {
+    html = `<tr><td colspan="5" class="muted">${data.counts.app ? 'Keine Treffer.' : 'Keine Chats in der App in diesem Stand.'}</td></tr>`;
+  } else if (!grouped) {
+    html = rows.map((c) => chatRow(c, false)).join('');
+  } else {
+    const groups = groupRows(rows);
+    const single = groups.length === 1;
+    html = groups.map((g) => {
+      const open = single || !!f || openGroups.has(g.key);
+      const n = g.rows.length;
+      const parts = [`${n} ${n === 1 ? 'Chat' : 'Chats'}`];
+      if (g.app && g.app !== n) parts.push(`${g.app} in der App`);
+      parts.push(`${fmtMB(g.size)} MB`, `zuletzt ${fmtTime(g.last)}`);
+      return `<tr class="grp" data-g="${esc(g.key)}"><td colspan="5"><span class="caret">${open ? '▾' : '▸'}</span><span class="mono">${esc(g.label)}</span> <span class="meta">${esc(parts.join(' · '))}</span></td></tr>`
+        + (open ? g.rows.map((c) => chatRow(c, true)).join('') : '');
+    }).join('');
+  }
+  $('#chats tbody').innerHTML = html;
+  document.querySelectorAll('#chats tbody tr[data-id]').forEach((tr) => tr.addEventListener('click', () => { selected = tr.dataset.id; render(); renderDetail(); }));
+  document.querySelectorAll('#chats tbody tr.grp').forEach((tr) => tr.addEventListener('click', () => {
+    const k = tr.dataset.g; if (openGroups.has(k)) openGroups.delete(k); else openGroups.add(k); render();
+  }));
+}
+
+// Gruppen nach Projektordner: Schluessel ist der Ordnername, den Claude unter
+// ~/.claude/projects anlegt (so, wie er auf dem Quell-PC hiess); Chats ohne
+// Transkript bekommen ihn aus ihrem Pfad. Neueste Aktivitaet zuerst.
+const keyOfPath = (p) => String(p || '').replace(/[^A-Za-z0-9]/g, '-');
+function groupRows(rows) {
+  const groups = new Map();
+  for (const c of rows) {
+    const key = c.transcript ? c.transcript.projectShown : (keyOfPath(c.cwdShown) || '(ohne Projektordner)');
+    if (!groups.has(key)) groups.set(key, { key, label: null, rows: [], size: 0, last: 0, app: 0 });
+    const g = groups.get(key);
+    g.rows.push(c);
+    g.size += c.size || 0;
+    g.last = Math.max(g.last, c.lastActivityAt || 0);
+    if (c.kind === 'app') g.app++;
+    if (!g.label && c.cwdShown) g.label = c.cwdShown;
+  }
+  for (const g of groups.values()) g.label = g.label || g.key;
+  return [...groups.values()].sort((a, b) => b.last - a.last);
 }
 function renderDetail() {
   const c = data.chats.find((x) => (x.cliSessionId || x.sessionId) === selected);
