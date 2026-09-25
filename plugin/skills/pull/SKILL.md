@@ -23,7 +23,13 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
 
 1. **Trockenlauf:** `clyde pull $ARGUMENTS --clyde-chat --dry-run --no-ask`
 
-2. **Fehlende Projektordner klaeren.** Fuer jede Meldung
+2. **Fehlende Projektordner klaeren.** Fehlen mehr als vier Ordner (typisch beim
+   ersten Pull auf einem neuen Rechner, etwa einem Mac), zuerst mit
+   **AskUserQuestion** fragen, ob Clyde alle fehlenden Ordner gesammelt unter
+   `~/ClydeProjekte/<Name>` anlegen soll (dann
+   `clyde pull $ARGUMENTS --clyde-chat --no-ask --create-missing ~/ClydeProjekte`
+   als Trockenlauf mit `--dry-run` und danach echt) oder ob der Nutzer einzeln
+   entscheiden will. Sonst, oder wenn einzeln gewuenscht, fuer jede Meldung
    „Projektordner ... gibt es hier nicht" (mit den betroffenen Chats und einer
    Zeile `clyde map --add "<NEUTRAL>" ...`) den Nutzer mit **AskUserQuestion**
    fragen, hoechstens vier Ordner pro Aufruf:
