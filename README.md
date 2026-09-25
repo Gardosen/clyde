@@ -1,46 +1,48 @@
 # Clyde
 
-Clyde hält die **Chats der Claude-App auf allen deinen PCs gleich**. Jedes
-Clyde-Konto hat eine eigene Sammlung, in die alle PCs des Kontos ihre Chats
-einbringen: Transkripte, Chatliste der App, Datei-Historie, Todos, Pläne. Jeder PC
-holt sich daraus, was ihm fehlt. Konten sehen sich nie gegenseitig; wer mehrere
-Personen bedient, legt jeder ein eigenes Konto an.
+Clyde keeps **the Claude desktop app's chats the same on all your computers**.
+Every Clyde account has its own collection that all computers of that account
+contribute to: transcripts, the app's chat list, file history, todos and plans.
+Each computer fetches whatever it is missing. Accounts never see each other; if
+several people use one Clyde server, each of them gets their own account.
 
-- **Push** bringt neue, weitergeführte und gelöschte Chats dieses PCs in die
-  Sammlung. Chats anderer PCs bleiben erhalten.
-- **Pull** holt neue und geänderte Chats der anderen PCs. Eigene Chats bleiben;
-  gelöscht wird nur, was auf einem anderen PC gelöscht wurde.
-- **Ersteinrichtung:** Hat ein PC schon Chats, kommen sie beim ersten Push in die
-  Sammlung; beim ersten Pull bleiben sie erhalten.
-- **Konflikte:** Wurde derselbe Chat auf zwei PCs weitergeführt, bleiben die
-  Zeilen beider Seiten erhalten. Bei anderen Dateien gewinnt die neuere Fassung.
+- **Push** adds new, continued and deleted chats of this computer to the
+  collection. Chats from other computers stay where they are.
+- **Pull** fetches new and changed chats from the other computers. This
+  computer's own chats are kept; a chat is only removed if it was deleted on
+  another computer.
+- **First setup:** if a computer already has chats, they are added to the
+  collection on its first push and kept on its first pull.
+- **Conflicts:** if the same chat was continued on two computers, the lines from
+  both sides are kept. For other files the newer version wins.
 
-Projekt: **https://github.com/Gardosen/clyde**
+Project: **https://github.com/Gardosen/clyde**
 
-Clyde besteht aus drei Teilen, die alle in diesem Repository liegen:
+Clyde has three parts, all in this repository:
 
-| Teil | Wo | Wozu |
+| Part | Where | Purpose |
 |---|---|---|
-| **Backend** | `server/`, `deploy/` | Docker-Compose-Dienst, speichert die Snapshots je Benutzer, mit Dashboard und Login |
-| **Plugin für die Claude-App** | `plugin/`, `.claude-plugin/` | Das Client-Gegenstück zum Backend im Plugin-Store der App: `/clyde:push` und `/clyde:pull` direkt im Chat |
-| **CLI** | `bin/`, `src/` | Der Befehl `clyde`, auf den das Plugin aufsetzt; geht auch ohne App im Terminal |
+| **Backend** | `server/`, `deploy/` | Docker Compose service that stores snapshots per user, with a dashboard and login |
+| **Plugin for the Claude app** | `plugin/`, `.claude-plugin/` | The client counterpart to the backend in the app's plugin store: `/clyde:push` and `/clyde:pull` right in a chat |
+| **CLI** | `bin/`, `src/` | The `clyde` command the plugin builds on; also works in a terminal without the app |
 
-Reines Node.js ohne Abhängigkeiten, Node 20 oder neuer.
+Plain Node.js without dependencies, Node 20 or newer.
 
-## Schnellstart
+## Quick start
 
-1. **Backend starten**, siehe [Backend betreiben](#backend-betreiben).
-2. **Im Dashboard anmelden** (Server-Adresse im Browser öffnen) und unter
-   „Zugang für PCs" je PC einen Client-Token erzeugen.
-3. **Auf jedem PC** das CLI installieren:
+1. **Start the backend**, see [Running the backend](#running-the-backend).
+2. **Sign in to the dashboard** (open the server address in a browser) and create
+   one client token per computer under *Zugang für PCs* (access for computers).
+3. **On every computer**, install the CLI:
 
    ```bash
    npm install -g github:Gardosen/clyde
    ```
 
-4. **Plugin in der Claude-App installieren:** Im Plugin-Store der App (Plus-Knopf
-   neben dem Eingabefeld, dann „Plugins") den Marketplace `Gardosen/clyde`
-   hinzufügen und das Plugin **clyde** installieren. Im Terminal geht dasselbe mit:
+4. **Install the plugin in the Claude app:** in the app's plugin store
+   (*Customize → Plugins*, or the plus button next to the input field) add the
+   marketplace `Gardosen/clyde` and install the plugin **clyde**. The same from a
+   terminal:
 
    ```bash
    claude plugin marketplace add Gardosen/clyde
@@ -50,124 +52,126 @@ Reines Node.js ohne Abhängigkeiten, Node 20 oder neuer.
    claude plugin install clyde@clyde
    ```
 
-5. **Einen eigenen Chat nur für Clyde anlegen** und darin `/clyde:setup` aufrufen.
-   Clyde fragt nach Server-Adresse und Token und registriert diesen Chat als
-   Clyde-Chat.
-6. **Synchronisieren:** Bevor du den PC wechselst, auf dem alten im Clyde-Chat
-   `/clyde:push`, auf dem neuen `/clyde:pull`. Fehlt dort ein Projektordner, fragt
-   Clyde per Auswahl: Pfad angeben, Ordner anlegen oder vorerst weglassen.
+5. **Create a chat just for Clyde** and run `/clyde:setup` in it. Clyde asks for
+   the server address and token and registers this chat as the Clyde chat.
+6. **Sync:** before switching computers, run `/clyde:push` in the Clyde chat on
+   the one you leave and `/clyde:pull` on the one you move to. If a project folder
+   is missing there, Clyde asks: enter a path, create the folder, or skip for now.
 
-## Das Plugin: Clyde in der Claude-App
+## The plugin: Clyde inside the Claude app
 
-Das Plugin ist das Client-Gegenstück zum Backend. Es läuft in einem eigenen
-**Clyde-Chat**, der nur zum Synchronisieren dient.
+The plugin is the client counterpart to the backend. It runs in a dedicated
+**Clyde chat** that is only used for syncing.
 
-| Befehl | Wirkung |
+| Command | What it does |
 |---|---|
-| `/clyde:setup [url] [token] [laufwerk]` | CLI prüfen, Server-Adresse und Token eintragen, Chat als Clyde-Chat registrieren |
-| `/clyde:push` | Änderungen dieses PCs in die Sammlung des Kontos einbringen |
-| `/clyde:pull` | Neue und geänderte Chats der anderen PCs holen; fragt per Auswahl nach fehlenden Projektordnern |
-| `/clyde:status` | Neuester Snapshot, lokale Änderungen, arbeitende Chats |
+| `/clyde:setup [url] [token] [drive]` | Checks the CLI, stores server address and token, registers the chat as the Clyde chat |
+| `/clyde:push` | Adds this computer's changes to the account's collection |
+| `/clyde:pull` | Fetches new and changed chats from the other computers; asks about missing project folders |
+| `/clyde:status` | Latest snapshot, what is waiting to be pushed or pulled, busy chats |
 
-So verhält es sich:
+How it behaves:
 
-- **Die App bleibt offen.** Blockiert wird nur, wenn ein anderer Chat gerade
-  antwortet. Clyde erkennt das an den Statusdateien, die die App für jeden
-  geöffneten Chat führt.
-- **Der Clyde-Chat wird nie synchronisiert**, weder hochgeladen noch beim Pull
-  verändert. Jeder PC hat seinen eigenen.
-- **Nach einem Pull:** Chats, die in der App gerade geöffnet sind, arbeiten mit
-  ihrem alten Stand im Speicher weiter. Clyde nennt sie. Bevor du dort
-  weiterschreibst, die App einmal neu starten. Neu hinzugekommene Chats erscheinen
-  in der Chatliste eventuell erst nach einem Neustart.
+- **The app stays open.** Syncing only waits while another chat is in the middle
+  of an answer. Clyde reads this from the status files the app keeps for every
+  open chat.
+- **The Clyde chat itself is never synced**, neither uploaded nor changed by a
+  pull. Every computer has its own.
+- **After a pull:** chats that are open in the app keep working with their old
+  state in memory. Clyde names them; restart the app before you continue writing
+  in them. Newly added chats may only show up in the chat list after a restart.
 
-Das Plugin ruft den Befehl `clyde` auf, deshalb muss das CLI installiert sein.
-`/clyde:setup` prüft das und schlägt die Installation vor. Ist das Repository
-privat, braucht die App Git-Zugriff darauf, um den Marketplace hinzuzufügen.
+The plugin calls the `clyde` command, so the CLI must be installed. `/clyde:setup`
+checks for it and offers to install it. If the repository is private, the app
+needs git access to it to add the marketplace.
 
-### Im Plugin-Verzeichnis von Anthropic
+### In Anthropic's plugin directory
 
-Damit Clyde ohne vorheriges Hinzufügen des Marketplace unter „Customize →
-Plugins → Discover" auftaucht, muss es im Verzeichnis von Anthropic gelistet
-sein. Eingereicht wird über das Entwicklerportal unter
-https://claude.ai/directory/manage („Submit new", dann „Plugin bundle",
-Repository `Gardosen/clyde`, Plugin-Pfad `plugin`). Dafür sind ein bezahlter
-claude.ai-Plan und ein mit claude.ai verbundenes GitHub-Konto nötig; Anthropic
-prüft jede Version, bevor sie erscheint. Die Beschreibung im Verzeichnis kommt aus
-`plugin/.claude-plugin/plugin.json` und `plugin/README.md`.
+To make Clyde show up under *Customize → Plugins → Discover* without adding the
+marketplace first, it has to be listed in Anthropic's directory. Plugins are
+submitted through the developer portal at https://claude.ai/directory/manage
+(*Submit new*, then *Plugin bundle*, repository `Gardosen/clyde`, plugin path
+`plugin`). This needs a paid claude.ai plan and a GitHub account connected to
+claude.ai; Anthropic reviews every version before it appears. The listing text
+comes from `plugin/.claude-plugin/plugin.json` and `plugin/README.md`.
 
-Bis zur Freigabe bleibt der Weg über den Marketplace `Gardosen/clyde`. Einen Skill
-über „Skills → Add → Upload" hochzuladen hilft nicht: Er erscheint nur im eigenen
-Arbeitsbereich, und die Clyde-Befehle brauchen Claude Code auf dem eigenen PC.
+Until then, use the marketplace `Gardosen/clyde`. Uploading a skill under
+*Skills → Add → Upload* does not help: it only appears in your own workspace, and
+the Clyde commands need Claude Code on your own computer.
 
-## Was synchronisiert wird
+## What gets synced
 
-| Bereich | Pfad (Windows) | Inhalt |
+| Area | Path (Windows) | Contents |
 |---|---|---|
-| claude-projects | `%USERPROFILE%\.claude\projects` | Transkripte (JSONL), Tool-Ergebnisse, Memory |
-| claude-file-history | `%USERPROFILE%\.claude\file-history` | Datei-Historie für Diff und Rewind |
-| claude-todos | `%USERPROFILE%\.claude\todos` | Todo-Listen |
-| claude-plans | `%USERPROFILE%\.claude\plans` | Plan-Mode-Dateien |
-| claude-history | `%USERPROFILE%\.claude\history.jsonl` | Eingabe-Historie |
-| desktop-sessions | `%APPDATA%\Claude\claude-code-sessions` | Chatliste der App: Titel, Projektordner, Modell, Archiv-Status |
+| claude-projects | `%USERPROFILE%\.claude\projects` | Transcripts (JSONL), tool results, memory |
+| claude-file-history | `%USERPROFILE%\.claude\file-history` | File history for diff and rewind |
+| claude-todos | `%USERPROFILE%\.claude\todos` | Todo lists |
+| claude-plans | `%USERPROFILE%\.claude\plans` | Plan mode files |
+| claude-history | `%USERPROFILE%\.claude\history.jsonl` | Prompt history |
+| desktop-sessions | `%APPDATA%\Claude\claude-code-sessions` | The app's chat list: title, project folder, model, archive state |
 
-Bewusst **nicht** dabei: laufende Prozesse (`.claude\sessions`), Login und
-Maschinen-ID (`.claude.json`, `.credentials.json`), Caches, Telemetrie.
+On macOS the first five live under `~/.claude`, the chat list under
+`~/Library/Application Support/Claude/claude-code-sessions`. The Claude app from
+the Microsoft Store keeps its data in its package folder
+(`%LOCALAPPDATA%\Packages\Claude_…\LocalCache\Roaming\Claude`); Clyde finds it
+there, also when run from a normal terminal.
 
-Gut zu wissen: Die App entfernt beim Löschen eines Chats nur den Eintrag aus der
-Chatliste, das Transkript bleibt auf der Platte. Auch ältere oder im Terminal
-geführte Sitzungen haben keinen Eintrag in der Chatliste. Clyde überträgt diese
-Transkripte mit, weil sie zum exakten Stand gehören. Das Dashboard zeigt sie
-getrennt an.
+Deliberately **not** synced: running processes (`.claude\sessions`), login and
+machine ID (`.claude.json`, `.credentials.json`), caches, telemetry.
 
-Ein Verzeichnis-Link wie `projects\...\memory -> D:\ClaudeMemory\...` wird
-verfolgt: Der Inhalt wandert mit, und auf dem Ziel-PC wird der Link neu angelegt.
-Fehlt das Ziel dort, legt Clyde es an, sofern das Laufwerk existiert.
+Good to know: when you delete a chat, the app only removes it from the chat list;
+the transcript stays on disk. Older sessions and sessions run in a terminal have
+no chat list entry either. Clyde syncs these transcripts too, because they are
+part of the state. The dashboard shows them separately.
 
-## Verschiedene Benutzerkonten, Laufwerke und Projektpfade
+A directory link such as `projects\...\memory -> D:\ClaudeMemory\...` is followed:
+its contents are synced, and the link is recreated on the target computer. If the
+target folder is missing there, Clyde creates it as long as the drive exists.
 
-Claude bildet den Schlüssel eines Projekts aus dem vollen Pfad
-(`C:\Users\warro\Nextcloud\Aegis` wird zu `C--Users-warro-Nextcloud-Aegis`) und
-schreibt den Pfad in jede Transkript-Zeile und in die Chatliste. Damit das auf
-einem PC mit anderem Konto oder anderem Laufwerk funktioniert, ersetzt jeder
-Client beim Hochladen seine eigenen Werte durch Platzhalter und setzt beim Pull
-seine eigenen wieder ein:
+## Different user accounts, drives and project paths
 
-- **Home-Verzeichnis:** automatisch das des angemeldeten Windows-Kontos.
-- **Projektlaufwerk:** das Laufwerk der Projekte außerhalb des Home, z. B. `D`
-  (`clyde init --project-drive D`). `D:\Aegis` auf PC A wird so zu `C:\Aegis`
-  auf PC B.
-- **Projekt-Zuordnung:** Liegt ein Projekt auf PC B ganz woanders, fragt der Pull
-  nach dem Pfad und merkt sich die Antwort (`clyde map --list`).
+Claude derives a project's key from its full path
+(`C:\Users\alice\Projects\Game` becomes `C--Users-alice-Projects-Game`) and writes
+the path into every transcript line and into the chat list. To make this work on
+a computer with a different user account or drive, each client replaces its own
+values with placeholders when uploading and puts its own values back when
+pulling:
 
-Ersetzt werden alle Schreibweisen (`C:\Users\warro`, `C:\\Users\\warro`,
-`C:/Users/warro`, `/c/Users/warro`, `C--Users-warro`), nur in Textdateien und nie
-in der Datei-Historie. Der Server sieht nur die neutrale Form; deshalb sind die
-Daten auf allen PCs gleich, und ein Push direkt nach einem Pull lädt nichts hoch.
+- **Home folder:** automatically the one of the signed-in user.
+- **Project drive:** the drive that holds your projects outside the home folder,
+  for example `D` (`clyde init --project-drive D`). `D:\Game` on computer A then
+  becomes `C:\Game` on computer B.
+- **Project mapping:** if a project lives somewhere else entirely on computer B,
+  pull asks for its path and remembers the answer (`clyde map --list`).
 
-## Backend betreiben
+All spellings are replaced (`C:\Users\alice`, `C:\\Users\\alice`,
+`C:/Users/alice`, `/c/Users/alice`, `C--Users-alice`), only in text files and never
+in the file history. The server only sees the neutral form, so the data is the
+same on every computer, and a push right after a pull uploads nothing.
 
-Das Backend ist ein Docker-Compose-Dienst. `deploy/` enthält die Variante für
-einen Server hinter **Traefik**; `docker-compose.yml` im Projektstamm ist für
-lokale Tests oder das LAN ohne Reverse-Proxy.
+## Running the backend
 
-### Hinter Traefik
+The backend is a Docker Compose service. `deploy/` contains the setup for a
+server behind **Traefik**; `docker-compose.yml` in the project root is for local
+tests or a LAN without a reverse proxy.
+
+### Behind Traefik
 
 ```bash
 cp deploy/.env.example deploy/.env
 ```
 
-In `deploy/.env` eintragen:
+Set in `deploy/.env`:
 
-| Variable | Bedeutung |
+| Variable | Meaning |
 |---|---|
-| `CLYDE_DOMAIN` | Domain des Dienstes, DNS muss auf den Server zeigen |
-| `CLYDE_ADMIN_USER` | Name des ersten Admins, Standard `admin` |
-| `CLYDE_ADMIN_PASSWORD` | Sein Passwort; leer lassen, dann erzeugt der Server eins und schreibt es einmalig ins Log |
-| `PROXY_NETWORK`, `TRAEFIK_ENTRYPOINT`, `TRAEFIK_CERTRESOLVER` | So, wie sie in deiner Traefik-Konfiguration heißen |
-| `CLYDE_TOKEN` | Nur für ältere Installationen: alter gemeinsamer Token, gilt als Token des Admins |
+| `CLYDE_DOMAIN` | Domain of the service; DNS must point to the server |
+| `CLYDE_ADMIN_USER` | Name of the first admin, default `admin` |
+| `CLYDE_ADMIN_PASSWORD` | Their password; leave it empty and the server generates one and writes it to the log once |
+| `PROXY_NETWORK`, `TRAEFIK_ENTRYPOINT`, `TRAEFIK_CERTRESOLVER` | As they are named in your Traefik configuration |
+| `CLYDE_TOKEN` | Only for older installations: the old shared token, treated as the admin's token |
 
-Dann auf dem Server:
+Then on the server:
 
 ```bash
 cd deploy && docker compose up -d --build
@@ -177,182 +181,178 @@ cd deploy && docker compose up -d --build
 docker compose logs clyde
 ```
 
-Das zweite Kommando zeigt beim ersten Start das erzeugte Admin-Passwort.
-`deploy/deploy.sh user@host -p PORT` kopiert das Projekt per SSH nach `/opt/clyde`
-und startet es dort.
+On first start the second command shows the generated admin password. Always
+start with `--build` after an update, otherwise Docker keeps running the old
+image. `deploy/deploy.sh user@host -p PORT` copies the project to `/opt/clyde` via
+SSH and starts it there. `https://your-domain/health` reports the running version.
 
-Antwortet die Domain mit „Gateway Timeout", erreicht Traefik den Container
-nicht. Meist hängt Clyde nicht im selben Docker-Netz wie Traefik; der Name aus
-`PROXY_NETWORK` muss exakt stimmen.
+If the domain answers with *Gateway Timeout*, Traefik cannot reach the container.
+Usually Clyde is not in the same Docker network as Traefik; the name in
+`PROXY_NETWORK` has to match exactly.
 
-Traefik bricht Anfragen standardmäßig nach 60 Sekunden Lesezeit ab. Clyde schickt
-deshalb höchstens 16 MiB je Anfrage (`uploadBatchMiB` in `~/.clyde/config.json`).
+Traefik aborts requests after 60 seconds of reading by default. Clyde therefore
+sends at most 16 MiB per request (`uploadBatchMiB` in `~/.clyde/config.json`).
 
-### Dashboard und Benutzer
+### Dashboard and users
 
-Das Dashboard liegt unter der Server-Adresse und ist durch einen Login geschützt.
+The dashboard lives at the server address and is protected by a login. Its
+interface is currently in German; the tab names are given in brackets.
 
-- **Chats:** je Snapshot die Chats aus der Chatliste mit Titel, Projektordner,
-  Modell, letzter Aktivität und Transkript-Größe. Auf Wunsch auch die Transkripte
-  ohne Eintrag in der App.
-- **Zugang für PCs:** eigene Client-Tokens erzeugen und widerrufen. Der Token wird
-  nur einmal angezeigt, zusammen mit dem fertigen `clyde init`-Befehl.
-- **Stände:** alle gespeicherten Snapshots mit Datum, Quell-PC und Größe, dazu der
-  tatsächlich belegte Platz auf dem Server. Einzelne oder ausgewählte Stände
-  löschen, oder nur die neuesten N behalten. Danach räumt der Server Chunks auf,
-  die kein Stand mehr braucht, und nennt den freigegebenen Platz. Chunks, die
-  jünger als eine Stunde sind, bleiben dabei stehen, damit ein gerade laufender
-  Push nichts verliert; sie verschwinden beim nächsten Aufräumen.
-- **Konto:** Passwort ändern; andere angemeldete Browser werden dabei abgemeldet.
-- **Benutzer** (nur Admins): Benutzer anlegen, Passwort setzen, löschen. Admins
-  können die Snapshots anderer Benutzer ansehen und löschen, aber nichts in
-  fremde Ablagen hochladen.
+- **Chats** (*Chats*): per snapshot the chats of the chat list with title,
+  project folder, model, last activity and transcript size, grouped like the
+  app's sidebar groups and otherwise by project folder. Optionally also the
+  transcripts without a chat list entry.
+- **Access for computers** (*Zugang für PCs*): create and revoke your own client
+  tokens. A token is shown only once, together with the ready-made `clyde init`
+  command.
+- **Snapshots** (*Stände*): all stored snapshots with date, source computer and
+  size, plus the space actually used on the server. Delete single or selected
+  snapshots, or keep only the newest N. The server then removes chunks no
+  snapshot needs any more and reports the space freed. Chunks younger than one
+  hour are kept so that a push in progress loses nothing; they go at the next
+  cleanup.
+- **Account** (*Konto*): change your password; other signed-in browsers are
+  signed out.
+- **Users** (*Benutzer*, admins only): create users, set passwords, delete users.
+  Admins can view and delete other users' snapshots but cannot upload into them.
 
-Jeder Benutzer hat eigene Snapshots und eigene Tokens und sieht nur seine Daten.
-Für den Notfall gibt es die Verwaltung auch auf der Kommandozeile:
+Every user has their own snapshots and tokens and only sees their own data. For
+emergencies the user management is also available on the command line:
 
 ```bash
 docker compose exec clyde node server/admin.js passwd admin
 ```
 
-Weitere Befehle: `list`, `add NAME [--admin]`, `token NAME [BEZEICHNUNG]`,
+More commands: `list`, `add NAME [--admin]`, `token NAME [LABEL]`,
 `admin NAME [off]`, `del NAME`.
 
-## Einrichten ohne Plugin
+## Using the CLI without the plugin
 
-Das CLI funktioniert auch allein im Terminal. Dann muss die Claude-App beim
-Synchronisieren geschlossen sein.
+The CLI also works on its own in a terminal. The Claude app must then be closed
+while syncing.
 
 ```bash
-clyde init --server https://clyde.example.com --token DEIN-TOKEN --project-drive D
+clyde init --server https://clyde.example.com --token YOUR-TOKEN --project-drive D
 ```
 
-Server-Adresse und Token sind bei der Ersteinrichtung Pflicht. Fehlen sie, fragt
-`clyde init` im Terminal danach. `clyde doctor` zeigt danach Pfade, Platzhalter,
-laufende Chats und ob Server und Token passen.
+Server address and token are required on first setup; if they are missing,
+`clyde init` asks for them in the terminal. `clyde doctor` then shows paths,
+placeholders, running chats and whether server and token work.
 
-| Befehl | Zweck |
+| Command | Purpose |
 |---|---|
-| `clyde init --server URL --token TOKEN` | Ersteinrichtung |
-| `clyde push` | Änderungen dieses PCs in die Sammlung einbringen |
-| `clyde pull` | Änderungen anderer PCs holen, `--dry-run` zeigt nur den Plan |
-| `clyde pull --create-missing DIR` | dabei fehlende Projektordner unter DIR anlegen (etwa auf einem Mac) |
-| `clyde pull ID --exact` | einen gespeicherten Stand exakt herstellen, lokale Abweichungen fallen weg |
-| `clyde merge ID ID [...]` | gespeicherte Stände zu einem neuen gemeinsamen Stand fusionieren |
-| `clyde status` | was hochzuladen und was zu holen ist, arbeitende Chats |
-| `clyde list` | Snapshots auf dem Server |
-| `clyde map --list` / `--add` / `--remove N` | Projekt-Zuordnungen |
-| `clyde doctor` | Einrichtung prüfen |
-| `clyde delete ID`, `clyde gc` | Snapshot löschen, Speicher freigeben |
+| `clyde init --server URL --token TOKEN` | First setup |
+| `clyde push` | Add this computer's changes to the collection |
+| `clyde pull` | Fetch other computers' changes; `--dry-run` only shows the plan |
+| `clyde pull --create-missing DIR` | Also create missing project folders under DIR (for example on a Mac) |
+| `clyde pull ID --exact` | Restore a stored snapshot exactly; local differences are removed |
+| `clyde merge ID ID [...]` | Merge stored snapshots into a new shared state |
+| `clyde status` | What is waiting to be pushed or pulled, busy chats |
+| `clyde list` | Snapshots on the server |
+| `clyde map --list` / `--add` / `--remove N` | Project mappings |
+| `clyde doctor` | Check the setup |
+| `clyde delete ID`, `clyde gc` | Delete a snapshot, free space |
 
-Vor jedem Pull legt Clyde eine Kopie des bisherigen Stands unter
-`%USERPROFILE%\.clyde\backups\<Zeitstempel>` an; die letzten drei bleiben.
+Before every pull Clyde copies the previous state to
+`%USERPROFILE%\.clyde\backups\<timestamp>`; the last three are kept.
 
-## Chats einem anderen Projektordner zuordnen
+## Moving chats to a different project folder
 
-Claude merkt sich zu jedem Chat den Ordner, in dem er gestartet wurde. Wer viele
-Projekte aus demselben Ordner begonnen hat, kann sie nachträglich dem richtigen
-Ordner zuordnen. Die Projektdateien bleiben, wo sie sind; umgestellt werden nur
-der Eintrag in der Chatliste (Projektordner und Ordner-Freigabe) und der
-Ablageort des Transkripts unter `.claude\projects`. Hatte der alte Ordner ein
-Memory, bekommt der neue eine Verknüpfung darauf, sodass das Wissen bleibt.
+Claude remembers for every chat the folder it was started in. If you started many
+projects from the same folder, you can assign them to the right folder
+afterwards. Your project files stay where they are; only the chat list entry
+(project folder and folder permission) and the transcript's location under
+`.claude\projects` change. If the old folder had a memory, the new one gets a
+link to it, so the knowledge is kept.
 
-Weil die App diese Einträge im Speicher hält, geht das nur bei geschlossener App
-aus einem Terminal. Der Trockenlauf geht jederzeit.
+Because the app keeps these entries in memory, this only works with the app
+closed, from a terminal. The dry run works at any time.
 
 ```bash
-clyde relocate --chat "Lunia" --to "D:\Lunia" --dry-run
+clyde relocate --chat "My Game" --to "D:\Games\MyGame" --dry-run
 ```
 
-Für mehrere Chats auf einmal ein Plan als JSON:
+For several chats at once, use a plan in JSON:
 
 ```json
-{ "chats": [ { "chat": "3. Lunia Archivar Projekt", "to": "D:\\Lunia" },
-             { "chat": "local_f4586c16-...", "to": "D:\\Lineage 2" } ] }
+{ "chats": [ { "chat": "My Game", "to": "D:\\Games\\MyGame" },
+             { "chat": "local_f4586c16-...", "to": "D:\\Tools" } ] }
 ```
 
 ```bash
 clyde relocate --plan plan.json
 ```
 
-Ein Chat wird über einen Teil seines Titels oder seine ID gefunden. Vor dem
-Umzug sichert Clyde die Einträge; `clyde relocate --undo <Sicherungsordner>`
-macht alles rückgängig. Den Sicherungsordner nennt die Ausgabe.
+A chat is found by part of its title or by its ID. Clyde backs up the entries
+before moving; `clyde relocate --undo <backup folder>` reverts everything. The
+output names the backup folder.
 
-## Dashboard: Gruppen und Projektordner
+## How it works
 
-Die Chatliste im Dashboard steht so geordnet wie in der App: Chats mit einer
-Gruppe der Seitenleiste in dieser Gruppe, alle anderen nach Projektordner. Titel,
-Projektordner und Modell von Transkripten ohne Eintrag in der App liest das
-Dashboard aus dem Anfang des Transkripts.
+- **Scan:** every file is converted to the neutral form and split into 4 MiB
+  chunks, each named by its SHA-256. A cache avoids re-hashing unchanged files.
+- **Reconcile:** every file is compared three ways: the local state, the
+  account's shared state (the latest snapshot) and the state this computer last
+  synced (the base, `~/.clyde/base-*.json`). If only one side changed, that side
+  wins, deletions included. If both changed, `.jsonl` transcripts and `MEMORY.md`
+  are merged line by line; otherwise the newer version wins. Without a base (first
+  sync) the states are combined.
+- **Push:** the server lists the chunks it is missing; only those are uploaded,
+  compressed. A 100 MB chat that was only appended to since the last push costs a
+  single chunk. The merged state is then stored as a new snapshot. If another
+  computer uploaded in the meantime, the server refuses and the client merges
+  again.
+- **Pull:** chunks already present locally are reused, the rest is downloaded.
+  Files are written completely first and then renamed atomically.
+- **Mappings:** when a project mapping is added or removed, Clyde moves the
+  affected chats right away so that the next sync does not see them as deleted
+  and new.
 
-## Wie es funktioniert
+## Security
 
-- **Scan:** Jede Datei wird in die neutrale Form gebracht und in 4-MiB-Stücke
-  zerlegt, jedes Stück per SHA-256 benannt. Ein Cache vermeidet das Neu-Hashen
-  unveränderter Dateien.
-- **Abgleich:** Jede Datei wird dreifach verglichen: lokaler Stand, gemeinsamer
-  Stand des Kontos (neuester Snapshot) und der Stand, den dieser PC zuletzt
-  abgeglichen hat (die Basis, `~/.clyde/base-*.json`). Hat sich nur eine Seite
-  geändert, gilt diese, auch fürs Löschen. Haben sich beide geändert, werden
-  `.jsonl`-Transkripte und `MEMORY.md` zeilenweise zusammengeführt, sonst gewinnt
-  die neuere Fassung. Ohne Basis (erster Abgleich) werden die Stände vereinigt.
-- **Push:** Der Server nennt die Stücke, die ihm fehlen; nur diese gehen
-  komprimiert hoch. Ein 100-MB-Chat, an den seit dem letzten Push nur angehängt
-  wurde, kostet ein einziges Stück. Danach wird der zusammengeführte Stand als
-  neuer Snapshot gespeichert. Hat inzwischen ein anderer PC hochgeladen, lehnt der
-  Server ab, und der Client führt neu zusammen.
-- **Pull:** Stücke, die lokal schon vorliegen, werden wiederverwendet, der Rest
-  geladen. Dateien werden erst vollständig geschrieben und dann atomar umbenannt.
-- **Zuordnungen:** Wird eine Projekt-Zuordnung gesetzt oder entfernt, stellt
-  Clyde die betroffenen Chats sofort um, damit sie beim nächsten Abgleich nicht
-  als gelöscht und neu erscheinen.
+- Dashboard login with scrypt-hashed passwords, signed session cookies (HttpOnly,
+  SameSite=Strict, Secure behind HTTPS) and a lockout after too many failed
+  attempts.
+- Client tokens are stored on the server only as hashes and can be revoked
+  individually. A client token cannot create further tokens or manage users.
+- TLS is handled by Traefik. Without HTTPS `clyde init` warns you, because the
+  token would otherwise be sent in plain text.
+- Chats contain everything written in them, including paths, code and tool
+  output. Admins can read them.
 
-## Sicherheit
+## Limitations
 
-- Dashboard-Login mit scrypt-gehashten Passwörtern, signierten Sitzungs-Cookies
-  (HttpOnly, SameSite=Strict, hinter HTTPS mit Secure) und einer Sperre nach zu
-  vielen Fehlversuchen.
-- Client-Tokens liegen auf dem Server nur als Hash und lassen sich einzeln
-  widerrufen. Ein Client-Token kann keine weiteren Tokens erzeugen und keine
-  Benutzer verwalten.
-- TLS übernimmt Traefik. Ohne HTTPS warnt `clyde init`, weil der Token sonst im
-  Klartext übertragen wird.
-- Die Chats enthalten alles, was in ihnen steht, auch Pfade, Code und
-  Tool-Ausgaben. Wer Admin ist, kann sie lesen.
+- **Other operating systems:** paths inside old tool output keep the source
+  computer's spelling (for example `\` instead of `/` on a Mac). Project folders
+  and the chat list are converted correctly through the mappings.
+- **Chat list while the app is running:** whether the app picks up new or changed
+  entries without a restart is not verified. When in doubt, restart the app after
+  a pull.
+- **Chat list groups** (sidebar groups) are stored in the app's settings file.
+  On push Clyde reads only group names and assignments from it and shows them in
+  the dashboard. They are not written into the app on the target computer,
+  because that file also holds all other app settings.
+- Snapshots in the old v1 format are rejected by the client; push again from the
+  source computer.
 
-## Grenzen
-
-- **Andere Betriebssysteme:** Pfade im Inhalt alter Tool-Ausgaben behalten die
-  Schreibweise des Quell-PCs (etwa `\` statt `/` auf einem Mac). Projektordner und
-  Chatliste werden über die Zuordnungen richtig umgestellt.
-- **Chatliste bei laufender App:** Ob die App neue oder geänderte Einträge ohne
-  Neustart übernimmt, ist nicht verifiziert. Nach einem Pull im Zweifel die App
-  einmal neu starten.
-- **Gruppen der Chatliste** (z. B. „Archivar Project") stehen in der
-  Einstellungsdatei der App. Clyde liest beim Push nur Gruppennamen und
-  Zuordnungen daraus und zeigt sie im Dashboard. Auf dem Ziel-PC werden sie nicht
-  in die App geschrieben, weil die Datei auch alle anderen App-Einstellungen enthält.
-- Snapshots im alten Format v1 lehnt der Client ab; auf dem Quell-PC einmal neu
-  pushen.
-
-## Entwicklung
+## Development
 
 ```bash
 npm test
 ```
 
-Die Tests starten den Server im Prozess und spielen durch: Push und Delta-Push,
-exakten Pull mit Löschen und Verkürzen, Trockenlauf, Backups, zwei PCs mit
-verschiedenen Konten und Laufwerken, Projekt-Zuordnung, den Clyde-Chat-Modus bei
-offener App, Login, Benutzertrennung, Token-Widerruf und die Dashboard-API.
+The tests start the server in-process and cover: push and delta push, exact pull
+with deletion and truncation, dry runs, backups, two computers with different
+accounts and drives, project mappings, merging across several computers and
+separate Clyde accounts, the Clyde chat mode with the app open, login, user
+separation, token revocation, snapshot deletion and the dashboard API.
 
-Plugin und Marketplace lassen sich prüfen mit:
+Check plugin and marketplace with:
 
 ```bash
 claude plugin validate ./plugin
 ```
 
-## Lizenz
+## License
 
-MIT, siehe [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
