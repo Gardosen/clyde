@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clyde Dashboard</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --accent-bg:#eff6ff; --warn:#b45309; --bad:#b91c1c; --ok:#15803d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#171a21; --fg:#e6e8eb; --muted:#9aa3ad; --line:#2a2f3a; --accent:#7aa2ff; --accent-bg:#1b2436; --warn:#f0b35c; --bad:#f87171; --ok:#4ade80; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  [hidden] { display:none !important; }
+  header { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0; z-index:2; }
+  header h1 { font-size:16px; margin:0 8px 0 0; }
+  nav { display:flex; gap:4px; flex-wrap:wrap; }
+  nav button { border:none; background:none; padding:6px 10px; border-radius:6px; color:var(--muted); }
+  nav button.on { background:var(--accent-bg); color:var(--fg); font-weight:600; }
+  .spacer { flex:1; }
+  input, select, button { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:6px 9px; }
+  button { cursor:pointer; } button.primary { background:var(--accent); border-color:var(--accent); color:#fff; } button.danger { color:var(--bad); }
+  main { padding:16px; }
+  .grid { display:grid; grid-template-columns: 340px 1fr; gap:16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 8px; }
+  .stack { display:flex; flex-direction:column; gap:16px; min-width:0; }
+  dl { display:grid; grid-template-columns: max-content 1fr; gap:4px 10px; margin:0; }
+  dt { color:var(--muted); white-space:nowrap; } dd { margin:0; word-break:break-all; font-family: ui-monospace, Consolas, monospace; font-size:12.5px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; white-space:nowrap; user-select:none; }
+  #chats th { cursor:pointer; } #chats tbody tr { cursor:pointer; } #chats tbody tr:hover, tr.sel { background:var(--accent-bg); }
+  .muted { color:var(--muted); } .mono { font-family: ui-monospace, Consolas, monospace; font-size:12.5px; }
+  .tag { display:inline-block; padding:1px 6px; border-radius:999px; border:1px solid var(--line); font-size:11.5px; color:var(--muted); margin-right:4px; }
+  .tag.warn { color:var(--warn); border-color:var(--warn); }
+  .msg { min-height:1.4em; } .msg.bad { color:var(--bad); } .msg.ok { color:var(--ok); }
+  .num { text-align:right; white-space:nowrap; }
+  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  form.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .secret { background:var(--bg); border:1px dashed var(--accent); border-radius:8px; padding:10px; margin-top:10px; }
+  .secret code { display:block; word-break:break-all; margin:4px 0 8px; font-size:12.5px; }
+  #login { max-width:360px; margin:12vh auto 0; }
+  #login label { display:block; margin:10px 0 4px; color:var(--muted); }
+  #login input { width:100%; }
+  #login button { width:100%; margin-top:14px; }
+</style>
+</head>
+<body>
+
+<section id="login" class="card" hidden>
+  <h1 style="font-size:18px;margin:4px 0 2px">Clyde</h1>
+  <div class="muted">Anmeldung zum Dashboard</div>
+  <form id="loginForm">
+    <label for="lu">Benutzername</label><input id="lu" autocomplete="username" required>
+    <label for="lp">Passwort</label><input id="lp" type="password" autocomplete="current-password" required>
+    <button class="primary" type="submit">Anmelden</button>
+    <div id="loginMsg" class="msg bad" style="margin-top:10px"></div>
+  </form>
+</section>
+
+<div id="app" hidden>
+<header>
+  <h1>Clyde</h1>
+  <nav id="tabs">
+    <button data-tab="chats" class="on">Chats</button>
+    <button data-tab="access">Zugang fuer PCs</button>
+    <button data-tab="account">Konto</button>
+    <button data-tab="users" data-admin hidden>Benutzer</button>
+  </nav>
+  <span class="spacer"></span>
+  <select id="viewUser" title="Snapshots dieses Benutzers ansehen" data-admin hidden></select>
+  <span id="who" class="muted"></span>
+  <button id="logout">Abmelden</button>
+</header>
+<main>
+  <div id="msg" class="msg bad"></div>
+
+  <section data-view="chats">
+    <div class="toolbar"><select id="snap"></select><button id="reload">Neu laden</button></div>
+    <div class="grid">
+      <div class="stack">
+        <section class="card"><h2>Snapshot</h2><dl id="meta"></dl></section>
+        <section class="card"><h2>Pfadwerte des Quell-PCs</h2><dl id="paths"></dl></section>
+        <section class="card"><h2>Projektordner der Chats in der App</h2><div id="projects" class="mono"></div></section>
+        <section class="card"><h2>Projekte nach Transkript-Groesse</h2><table id="ptable"><thead><tr><th>Schluessel (Quell-PC)</th><th class="num">Chats</th><th class="num">MB</th></tr></thead><tbody></tbody></table></section>
+      </div>
+      <div class="stack">
+        <section class="card">
+          <div class="toolbar"><h2 style="margin:0">Chats</h2><input id="filter" placeholder="Filter: Titel, Pfad, Modell, ID" size="40">
+            <label title="Transkripte ohne Eintrag in der Chatliste der App: in der App geloeschte Chats und aeltere oder im Terminal gefuehrte Sitzungen"><input id="showAll" type="checkbox"> auch Transkripte ohne Eintrag in der App</label>
+            <span id="count" class="muted"></span></div>
+          <table id="chats"><thead><tr>
+            <th data-k="title">Titel</th><th data-k="cwdShown">Projektordner</th><th data-k="model">Modell</th>
+            <th data-k="lastActivityAt">Zuletzt aktiv</th><th data-k="size" class="num">MB</th><th data-k="chunks" class="num">Chunks</th>
+          </tr></thead><tbody></tbody></table>
+        </section>
+        <section class="card"><h2>Details</h2><dl id="detail"><dd class="muted" style="grid-column:1/-1">Chat in der Liste anklicken.</dd></dl></section>
+      </div>
+    </div>
+  </section>
+
+  <section data-view="access" hidden class="stack" style="max-width:900px">
+    <section class="card">
+      <h2>Client-Tokens</h2>
+      <p class="muted" style="margin-top:0">Jeder PC bekommt einen eigenen Token. Ein widerrufener Token sperrt nur diesen PC.</p>
+      <table id="tokens"><thead><tr><th>Bezeichnung</th><th>Erzeugt</th><th>Zuletzt benutzt</th><th></th></tr></thead><tbody></tbody></table>
+      <form id="tokenForm" class="row" style="margin-top:12px">
+        <input id="tokenLabel" placeholder="Bezeichnung, z. B. Laptop" maxlength="60" required>
+        <button class="primary" type="submit">Token erzeugen</button>
+      </form>
+      <div id="tokenOut" class="secret" hidden>
+        <div>Der Token wird nur jetzt angezeigt. Auf dem PC einrichten mit:</div>
+        <code id="tokenCmd"></code>
+        <button id="copyCmd" type="button">Befehl kopieren</button>
+      </div>
+      <div id="tokenMsg" class="msg"></div>
+    </section>
+  </section>
+
+  <section data-view="account" hidden class="stack" style="max-width:520px">
+    <section class="card">
+      <h2>Passwort aendern</h2>
+      <form id="pwForm" class="stack" style="gap:8px">
+        <input id="pwCur" type="password" placeholder="Aktuelles Passwort" autocomplete="current-password" required>
+        <input id="pwNew" type="password" placeholder="Neues Passwort (mindestens 10 Zeichen)" autocomplete="new-password" minlength="10" required>
+        <button class="primary" type="submit">Speichern</button>
+        <div class="muted">Andere angemeldete Browser werden dabei abgemeldet. Client-Tokens bleiben gueltig.</div>
+      </form>
+      <div id="pwMsg" class="msg"></div>
+    </section>
+  </section>
+
+  <section data-view="users" hidden class="stack" style="max-width:900px">
+    <section class="card">
+      <h2>Benutzer</h2>
+      <table id="users"><thead><tr><th>Name</th><th>Rolle</th><th class="num">Tokens</th><th class="num">Snapshots</th><th>Angelegt</th><th></th></tr></thead><tbody></tbody></table>
+      <form id="userForm" class="row" style="margin-top:12px">
+        <input id="nuName" placeholder="Benutzername" pattern="[a-z0-9][a-z0-9._-]{0,39}" required>
+        <input id="nuPw" type="password" placeholder="Passwort (mind. 10 Zeichen)" minlength="10" autocomplete="new-password" required>
+        <label><input id="nuAdmin" type="checkbox"> Admin</label>
+        <button class="primary" type="submit">Anlegen</button>
+      </form>
+      <div id="userMsg" class="msg"></div>
+    </section>
+  </section>
+</main>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmtMB = (b) => (b / 1048576).toFixed(b < 10485760 ? 2 : 1);
+const fmtTime = (v) => { const ms = typeof v === 'string' ? Date.parse(v) : v; return ms ? new Date(ms).toLocaleString('de-DE') : ''; };
+const row = (dt, dd, cls = '') => `<dt>${esc(dt)}</dt><dd class="${cls}">${dd}</dd>`;
+const say = (el, text, kind = 'bad') => { el.textContent = text || ''; el.className = 'msg ' + kind; };
+
+let me = null, data = null, sortKey = 'lastActivityAt', sortDir = -1, selected = null, viewUser = null;
+
+async function api(method, p, body) {
+  const r = await fetch(p, { method, headers: { 'x-clyde': '1', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const text = await r.text();
+  let j = null; try { j = text ? JSON.parse(text) : null; } catch {}
+  if (r.status === 401 && p !== '/login') { showLogin(); throw new Error('Bitte anmelden.'); }
+  if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  return j;
+}
+const q = (p) => (viewUser && viewUser !== me.user ? p + (p.includes('?') ? '&' : '?') + 'user=' + encodeURIComponent(viewUser) : p);
+
+function showLogin() { me = null; $('#app').hidden = true; $('#login').hidden = false; $('#lu').focus(); }
+async function start() {
+  try { me = await api('GET', '/me'); } catch { return; }
+  $('#login').hidden = true; $('#app').hidden = false;
+  $('#who').textContent = me.user + (me.admin ? ' (Admin)' : '');
+  document.querySelectorAll('[data-admin]').forEach((el) => { el.hidden = !me.admin; });
+  viewUser = me.user;
+  if (me.admin) await loadUserSelect();
+  showTab('chats');
+}
+
+$('#loginForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  say($('#loginMsg'), '');
+  try { await api('POST', '/login', { user: $('#lu').value, password: $('#lp').value }); $('#lp').value = ''; await start(); }
+  catch (e) { say($('#loginMsg'), e.message); }
+});
+$('#logout').addEventListener('click', async () => { try { await api('POST', '/logout'); } catch {} showLogin(); });
+
+function showTab(name) {
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+  document.querySelectorAll('[data-view]').forEach((v) => { v.hidden = v.dataset.view !== name; });
+  say($('#msg'), '');
+  if (name === 'chats') loadSnapshots();
+  if (name === 'access') loadTokens();
+  if (name === 'users') loadUsers();
+}
+document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+// ---------- Chats ----------
+async function loadUserSelect() {
+  const { users } = await api('GET', '/users');
+  $('#viewUser').innerHTML = users.map((u) => `<option value="${esc(u.name)}"${u.name === viewUser ? ' selected' : ''}>Ansicht: ${esc(u.name)}</option>`).join('');
+}
+$('#viewUser').addEventListener('change', () => { viewUser = $('#viewUser').value; loadSnapshots(); });
+$('#reload').addEventListener('click', () => loadSnapshots());
+$('#snap').addEventListener('change', () => loadSnapshot($('#snap').value));
+$('#filter').addEventListener('input', render);
+$('#showAll').addEventListener('change', render);
+document.querySelectorAll('#chats th').forEach((th) => th.addEventListener('click', () => {
+  const k = th.dataset.k; if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = ['title', 'cwdShown', 'model'].includes(k) ? 1 : -1; } render();
+}));
+
+async function loadSnapshots() {
+  try {
+    const { snapshots } = await api('GET', q('/snapshots'));
+    $('#snap').innerHTML = snapshots.map((s) => `<option value="${esc(s.id)}">${esc(s.id)} · ${esc(s.host)}/${esc(s.user)} · ${s.stats.files} Dateien</option>`).join('');
+    data = null; render(); ['#meta', '#paths', '#projects', '#ptable tbody'].forEach((s) => { $(s).innerHTML = ''; });
+    if (!snapshots.length) { say($('#msg'), 'Noch keine Snapshots. Auf einem PC "clyde push" ausfuehren.', 'muted'); return; }
+    await loadSnapshot(snapshots[0].id);
+  } catch (e) { say($('#msg'), e.message); }
+}
+async function loadSnapshot(id) {
+  try { data = await api('GET', q('/snapshots/' + encodeURIComponent(id) + '/chats')); selected = null; renderSnapshot(); render(); }
+  catch (e) { say($('#msg'), e.message); }
+}
+function renderSnapshot() {
+  const s = data.snapshot;
+  $('#meta').innerHTML = row('ID', esc(s.id)) + row('Erstellt', esc(fmtTime(s.createdAt))) + row('Quell-PC', esc(s.host + ' / ' + s.user + ' / ' + s.platform))
+    + row('Dateien', esc(s.stats.files + ' (' + fmtMB(s.stats.bytes) + ' MB, ' + s.stats.chunks + ' Chunks)'))
+    + row('Chats in der App', esc(data.counts.app))
+    + row('In der App geloescht', esc(data.counts.deleted) + ' <span class="muted">(Transkript liegt noch vor)</span>')
+    + row('Nur Transkript', esc(data.counts.transcript) + ' <span class="muted">(aeltere oder Terminal-Sitzungen)</span>')
+    + Object.entries(s.roots).map(([n, r]) => row(n, esc(r.missing ? 'fehlt auf dem Quell-PC' : r.files + ' Dateien, ' + fmtMB(r.bytes) + ' MB' + (r.links ? ', ' + r.links + ' Links' : '')))).join('');
+  $('#paths').innerHTML = row('Home', esc(s.home) + ' <span class="tag">@@CLYDE_HOME_*@@</span>')
+    + row('Projektlaufwerk', s.projectDrive ? esc(s.projectDrive + ':') + ' <span class="tag">@@CLYDE_DRIVE_*@@</span>' : '<span class="muted">nicht gesetzt</span>')
+    + row('Claude-Home', esc(s.claudeHome || ''))
+    + Object.entries(s.rootPaths).map(([n, p]) => row(n, esc(p))).join('');
+  $('#projects').innerHTML = s.projects.length ? s.projects.map((p) => `<div title="${esc(p.canonical)}">${esc(p.shown)}</div>`).join('') : '<span class="muted">keine vermerkt</span>';
+  $('#ptable tbody').innerHTML = data.projects.map((p) => `<tr><td class="mono" title="${esc(p.key)}">${esc(p.keyShown)}</td><td class="num">${p.transcripts}</td><td class="num">${fmtMB(p.bytes)}</td></tr>`).join('');
+}
+function render() {
+  if (!data) { $('#chats tbody').innerHTML = ''; $('#count').textContent = ''; return; }
+  const f = $('#filter').value.trim().toLowerCase();
+  const all = $('#showAll').checked;
+  const rows = data.chats.map((c) => ({ ...c, size: c.transcript ? c.transcript.size : 0, chunks: c.transcript ? c.transcript.chunks : 0 }))
+    .filter((c) => all || c.kind === 'app')
+    .filter((c) => !f || [c.title, c.cwdShown, c.model, c.cliSessionId, c.sessionId, c.transcript && c.transcript.projectShown].some((v) => v && String(v).toLowerCase().includes(f)))
+    .sort((a, b) => { const x = a[sortKey], y = b[sortKey]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (typeof x === 'string' ? x.localeCompare(y, 'de') : x - y) * sortDir; });
+  const others = data.counts.deleted + data.counts.transcript;
+  $('#count').textContent = all ? `${rows.length} angezeigt (${data.counts.app} in der App, ${others} nur Transkript)` : `${rows.length} von ${data.counts.app} Chats in der App` + (others ? `, ${others} weitere Transkripte ausgeblendet` : '');
+  $('#chats tbody').innerHTML = rows.map((c) => `<tr data-id="${esc(c.cliSessionId || c.sessionId)}" class="${selected === (c.cliSessionId || c.sessionId) ? 'sel' : ''}">
+    <td>${c.title ? esc(c.title) : `<span class="muted">${c.kind === 'deleted' ? 'in der App geloescht' : 'nur Transkript'}</span>`}${c.isArchived ? ' <span class="tag">Archiv</span>' : ''}${c.kind === 'deleted' ? ' <span class="tag">geloescht</span>' : ''}${c.sidebar && !c.transcript ? ' <span class="tag warn">kein Transkript</span>' : ''}</td>
+    <td class="mono">${esc(c.cwdShown || (c.transcript ? c.transcript.projectShown : ''))}</td>
+    <td>${esc(c.model || '')}</td><td>${esc(fmtTime(c.lastActivityAt))}</td>
+    <td class="num">${c.transcript ? fmtMB(c.transcript.size) : ''}</td><td class="num">${c.transcript ? c.transcript.chunks : ''}</td></tr>`).join('');
+  document.querySelectorAll('#chats tbody tr').forEach((tr) => tr.addEventListener('click', () => { selected = tr.dataset.id; render(); renderDetail(); }));
+}
+function renderDetail() {
+  const c = data.chats.find((x) => (x.cliSessionId || x.sessionId) === selected);
+  if (!c) return;
+  const t = c.transcript;
+  const kindText = { app: 'in der Chatliste der App', deleted: 'in der App geloescht, Transkript liegt noch vor', transcript: 'nur Transkript (aeltere oder Terminal-Sitzung)' }[c.kind] || '';
+  $('#detail').innerHTML = row('Titel', esc(c.title || '')) + row('Art', esc(kindText)) + row('Eintrag in der App', esc(c.file || 'keiner'), 'mono')
+    + row('Session-ID (App)', esc(c.sessionId || ''), 'mono') + row('Session-ID (CLI)', esc(c.cliSessionId || ''), 'mono')
+    + row('Projektordner', esc(c.cwdShown || '')) + row('  neutral', esc(c.cwd || '')) + row('Ursprung', esc(c.originCwd || ''))
+    + row('Modell', esc(c.model || '')) + row('Effort', esc(c.effort || '')) + row('Rechte-Modus', esc(c.permissionMode || '')) + row('Archiviert', c.isArchived ? 'ja' : 'nein')
+    + row('Erstellt', esc(fmtTime(c.createdAt))) + row('Zuletzt aktiv', esc(fmtTime(c.lastActivityAt))) + row('Zuletzt fokussiert', esc(fmtTime(c.lastFocusedAt)))
+    + (t ? row('Transkript', esc(t.path), 'mono') + row('  Projektschluessel', esc(t.projectShown) + ' <span class="muted">(' + esc(t.project) + ')</span>')
+         + row('  Groesse', esc(fmtMB(t.size) + ' MB, ' + t.chunks + ' Chunks')) + row('  Geaendert', esc(fmtTime(t.mtime)))
+       : row('Transkript', '<span class="muted">nicht im Snapshot</span>'));
+}
+
+// ---------- Zugang fuer PCs ----------
+async function loadTokens() {
+  try {
+    me = await api('GET', '/me');
+    $('#tokens tbody').innerHTML = me.tokens.length ? me.tokens.map((t) => `<tr><td>${esc(t.label)}</td><td>${esc(fmtTime(t.createdAt))}</td><td>${t.lastUsedAt ? esc(fmtTime(t.lastUsedAt)) : '<span class="muted">noch nie</span>'}</td>
+      <td class="num"><button class="danger" data-revoke="${esc(t.id)}">Widerrufen</button></td></tr>`).join('') : '<tr><td colspan="4" class="muted">Noch keine Tokens.</td></tr>';
+    document.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Token widerrufen? Der PC kann danach nicht mehr synchronisieren.')) return;
+      try { await api('DELETE', '/me/tokens/' + b.dataset.revoke); say($('#tokenMsg'), 'Token widerrufen.', 'ok'); loadTokens(); } catch (e) { say($('#tokenMsg'), e.message); }
+    }));
+  } catch (e) { say($('#tokenMsg'), e.message); }
+}
+$('#tokenForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  try {
+    const t = await api('POST', '/me/tokens', { label: $('#tokenLabel').value });
+    $('#tokenCmd').textContent = `clyde init --server ${location.origin} --token ${t.token}`;
+    $('#tokenOut').hidden = false; $('#tokenLabel').value = '';
+    say($('#tokenMsg'), '');
+    loadTokens();
+  } catch (e) { say($('#tokenMsg'), e.message); }
+});
+$('#copyCmd').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#tokenCmd').textContent); say($('#tokenMsg'), 'Befehl kopiert.', 'ok'); } catch { say($('#tokenMsg'), 'Kopieren nicht moeglich, bitte markieren und kopieren.'); }
+});
+
+// ---------- Konto ----------
+$('#pwForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  try { await api('POST', '/me/password', { current: $('#pwCur').value, next: $('#pwNew').value }); $('#pwCur').value = ''; $('#pwNew').value = ''; say($('#pwMsg'), 'Passwort geaendert.', 'ok'); }
+  catch (e) { say($('#pwMsg'), e.message); }
+});
+
+// ---------- Benutzer (Admin) ----------
+async function loadUsers() {
+  try {
+    const { users } = await api('GET', '/users');
+    $('#users tbody').innerHTML = users.map((u) => `<tr><td>${esc(u.name)}</td><td>${u.admin ? 'Admin' : 'Benutzer'}</td><td class="num">${u.tokens}</td><td class="num">${u.snapshots}</td><td>${esc(fmtTime(u.createdAt))}</td>
+      <td class="num"><button data-pw="${esc(u.name)}">Passwort setzen</button> ${u.name === me.user ? '' : `<button class="danger" data-del="${esc(u.name)}">Loeschen</button>`}</td></tr>`).join('');
+    document.querySelectorAll('[data-pw]').forEach((b) => b.addEventListener('click', async () => {
+      const pw = prompt(`Neues Passwort fuer ${b.dataset.pw} (mindestens 10 Zeichen):`);
+      if (!pw) return;
+      try { await api('POST', '/users/' + encodeURIComponent(b.dataset.pw) + '/password', { password: pw }); say($('#userMsg'), `Passwort fuer ${b.dataset.pw} gesetzt.`, 'ok'); } catch (e) { say($('#userMsg'), e.message); }
+    }));
+    document.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm(`Benutzer ${b.dataset.del} samt allen Snapshots endgueltig loeschen?`)) return;
+      try { await api('DELETE', '/users/' + encodeURIComponent(b.dataset.del)); say($('#userMsg'), `${b.dataset.del} geloescht.`, 'ok'); loadUsers(); loadUserSelect(); } catch (e) { say($('#userMsg'), e.message); }
+    }));
+  } catch (e) { say($('#userMsg'), e.message); }
+}
+$('#userForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  try {
+    await api('POST', '/users', { name: $('#nuName').value, password: $('#nuPw').value, admin: $('#nuAdmin').checked });
+    say($('#userMsg'), `Benutzer ${$('#nuName').value} angelegt. Er meldet sich hier an und erzeugt seine Client-Tokens selbst.`, 'ok');
+    $('#nuName').value = ''; $('#nuPw').value = ''; $('#nuAdmin').checked = false;
+    loadUsers(); loadUserSelect();
+  } catch (e) { say($('#userMsg'), e.message); }
+});
+
+start().then(() => { if (!me) showLogin(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "name": "clyde",
+  "owner": {
+    "name": "Gardosen"
+  },
+  "metadata": {
+    "description": "Clyde: Chats der Claude-Desktop-App zwischen PCs synchronisieren. Backend und Client unter https://github.com/Gardosen/clyde",
+    "version": "0.3.0"
+  },
+  "plugins": [
+    {
+      "name": "clyde",
+      "source": "./plugin",
+      "description": "Client-Gegenstueck zum Clyde-Backend: /clyde:push und /clyde:pull aus einem eigenen Clyde-Chat, ohne die App zu schliessen. Projekt, Backend und Anleitung: https://github.com/Gardosen/clyde",
+      "version": "0.3.0",
+      "author": {
+        "name": "Gardosen"
+      },
+      "homepage": "https://github.com/Gardosen/clyde",
+      "repository": "https://github.com/Gardosen/clyde",
+      "license": "MIT",
+      "keywords": ["sync", "chats", "backup", "multi-pc", "clyde"],
+      "category": "productivity"
+    }
+  ]
+}

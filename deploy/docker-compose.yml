@@ -1,0 +1,53 @@
+# Produktion auf einem Server hinter Traefik. Traefik findet den Container ueber
+# die Labels, holt das Let's-Encrypt-Zertifikat fuer CLYDE_DOMAIN und leitet an
+# Port 8484 weiter.
+#
+# Netz-, Entrypoint- und Resolver-Namen in deploy/.env so eintragen, wie sie in
+# der Traefik-Konfiguration heissen (docker network ls, Traefik-Static-Config).
+#
+# Start:  cd deploy && docker compose up -d --build
+# Erstes Admin-Passwort (falls CLYDE_ADMIN_PASSWORD leer):  docker compose logs clyde
+name: clyde
+
+services:
+  clyde:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: clyde-server:local
+    container_name: clyde
+    restart: unless-stopped
+    ports:
+      # nur lokal auf dem Server, fuer Health-Checks: curl http://127.0.0.1:8484/health
+      - "127.0.0.1:${CLYDE_BIND_PORT:-8484}:8484"
+    environment:
+      CLYDE_DATA_DIR: /data
+      CLYDE_ADMIN_USER: ${CLYDE_ADMIN_USER:-admin}
+      CLYDE_ADMIN_PASSWORD: ${CLYDE_ADMIN_PASSWORD:-}
+      CLYDE_TOKEN: ${CLYDE_TOKEN:-}
+    volumes:
+      - clyde-data:/data
+    networks:
+      - default
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${PROXY_NETWORK:-proxy}
+      traefik.http.routers.clyde.rule: Host(`${CLYDE_DOMAIN:?CLYDE_DOMAIN in deploy/.env setzen}`)
+      traefik.http.routers.clyde.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.clyde.tls: "true"
+      traefik.http.routers.clyde.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.services.clyde.loadbalancer.server.port: "8484"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-proxy}
+
+volumes:
+  clyde-data:

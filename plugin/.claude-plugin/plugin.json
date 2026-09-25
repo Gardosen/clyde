@@ -1,0 +1,12 @@
+{
+  "name": "clyde",
+  "version": "0.3.0",
+  "description": "Client-Gegenstueck zum Clyde-Backend: synchronisiert den Zustand der Claude-App-Chats zwischen PCs. Befehle /clyde:setup, /clyde:push, /clyde:pull, /clyde:status aus einem eigenen Clyde-Chat. Projekt und Backend: https://github.com/Gardosen/clyde",
+  "author": {
+    "name": "Gardosen"
+  },
+  "homepage": "https://github.com/Gardosen/clyde",
+  "repository": "https://github.com/Gardosen/clyde",
+  "license": "MIT",
+  "keywords": ["sync", "chats", "backup", "multi-pc", "clyde"]
+}

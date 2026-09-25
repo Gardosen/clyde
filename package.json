@@ -1,0 +1,25 @@
+{
+  "name": "clyde",
+  "version": "0.3.0",
+  "description": "Synchronisiert den exakten Zustand der Claude-Desktop-App-Chats zwischen PCs: Backend (Docker Compose), CLI-Client und Claude-Plugin.",
+  "type": "module",
+  "bin": {
+    "clyde": "bin/clyde.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "server": "node server/index.js"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gardosen/clyde.git"
+  },
+  "homepage": "https://github.com/Gardosen/clyde",
+  "bugs": {
+    "url": "https://github.com/Gardosen/clyde/issues"
+  }
+}

@@ -1,0 +1,22 @@
+# Lokaler Test- oder LAN-Betrieb ohne Reverse-Proxy.
+# Produktion hinter Traefik: siehe deploy/docker-compose.yml
+services:
+  clyde:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: clyde-server:local
+    container_name: clyde
+    restart: unless-stopped
+    ports:
+      - "${CLYDE_PORT:-8484}:8484"
+    environment:
+      CLYDE_DATA_DIR: /data
+      CLYDE_ADMIN_USER: ${CLYDE_ADMIN_USER:-admin}
+      CLYDE_ADMIN_PASSWORD: ${CLYDE_ADMIN_PASSWORD:-}
+      CLYDE_TOKEN: ${CLYDE_TOKEN:-}
+    volumes:
+      - clyde-data:/data
+
+volumes:
+  clyde-data:
