@@ -185,9 +185,16 @@ Das Dashboard liegt unter der Server-Adresse und ist durch einen Login geschütz
   ohne Eintrag in der App.
 - **Zugang für PCs:** eigene Client-Tokens erzeugen und widerrufen. Der Token wird
   nur einmal angezeigt, zusammen mit dem fertigen `clyde init`-Befehl.
+- **Stände:** alle gespeicherten Snapshots mit Datum, Quell-PC und Größe, dazu der
+  tatsächlich belegte Platz auf dem Server. Einzelne oder ausgewählte Stände
+  löschen, oder nur die neuesten N behalten. Danach räumt der Server Chunks auf,
+  die kein Stand mehr braucht, und nennt den freigegebenen Platz. Chunks, die
+  jünger als eine Stunde sind, bleiben dabei stehen, damit ein gerade laufender
+  Push nichts verliert; sie verschwinden beim nächsten Aufräumen.
 - **Konto:** Passwort ändern; andere angemeldete Browser werden dabei abgemeldet.
 - **Benutzer** (nur Admins): Benutzer anlegen, Passwort setzen, löschen. Admins
-  können die Snapshots anderer Benutzer lesend ansehen.
+  können die Snapshots anderer Benutzer ansehen und löschen, aber nichts in
+  fremde Ablagen hochladen.
 
 Jeder Benutzer hat eigene Snapshots und eigene Tokens und sieht nur seine Daten.
 Für den Notfall gibt es die Verwaltung auch auf der Kommandozeile:

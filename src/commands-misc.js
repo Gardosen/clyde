@@ -226,7 +226,8 @@ function requireAppClosed(action, force) {
 
 export async function gc(cfg, opts, log) {
   const r = await new Client(cfg.server, cfg.token).gc();
-  log.info(`Aufgeraeumt: ${r.deleted} Chunks geloescht (${fmtBytes(r.freedBytes)}), ${r.kept} behalten.`);
+  log.info(`Aufgeraeumt: ${r.deleted} Chunks geloescht (${fmtBytes(r.freedBytes)}), ${r.kept} behalten.`
+    + (r.recent ? ` ${r.recent} nicht mehr benoetigte Chunks sind juenger als ${r.gcGraceMinutes} Minuten und werden beim naechsten Aufraeumen entfernt.` : ''));
 }
 
 export async function del(cfg, opts, log) {

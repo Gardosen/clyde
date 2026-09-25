@@ -19,7 +19,7 @@ const { Client } = await import('../src/client.js');
 const { log } = await import('../src/log.js');
 
 const TOKEN = 'test-token';
-const server = createServer({ dataDir: path.join(tmp, 'server'), token: TOKEN, log: { log() {}, error: console.error } });
+const server = createServer({ dataDir: path.join(tmp, 'server'), token: TOKEN, gcGraceMs: 0, log: { log() {}, error: console.error } });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const SERVER = `http://127.0.0.1:${server.address().port}`;
 after(() => { server.close(); fs.rmSync(tmp, { recursive: true, force: true }); });

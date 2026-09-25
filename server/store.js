@@ -28,9 +28,14 @@ export class Store {
   exists(p) { return fs.promises.access(p).then(() => true, () => false); }
   hasBlob(h) { return this.exists(this.blobPath(h)); }
 
+  // Liefert die fehlenden Chunks und frischt den Zeitstempel der vorhandenen auf,
+  // damit gc() sie waehrend eines laufenden Pushs nicht entfernt
   async missing(hashes) {
     const out = [];
-    for (const h of hashes) if (!(await this.hasBlob(h))) out.push(h);
+    const now = new Date();
+    for (const h of hashes) {
+      try { await fs.promises.utimes(this.blobPath(h), now, now); } catch { out.push(h); }
+    }
     return out;
   }
   // true = neu gespeichert, false = war schon da
@@ -67,20 +72,41 @@ export class Store {
     try { await fs.promises.unlink(this.snapPath(id)); return true; }
     catch (e) { if (e.code === 'ENOENT') return false; throw e; }
   }
-  async gc() {
+  // Loescht Chunks, die kein Snapshot mehr braucht. Chunks, die juenger als
+  // graceMs sind, bleiben: ein gerade laufender Push hat sie evtl. schon
+  // hochgeladen oder als vorhanden gemeldet bekommen, aber sein Manifest noch
+  // nicht gespeichert (missing() frischt den Zeitstempel vorhandener Chunks auf).
+  async gc(graceMs = 0) {
     const referenced = new Set();
     for (const man of await this.listSnapshots()) for (const h of manifestHashes(man)) referenced.add(h);
-    let deleted = 0, kept = 0, freedBytes = 0;
+    let deleted = 0, kept = 0, recent = 0, freedBytes = 0;
+    const now = Date.now();
     for (const sub of await fs.promises.readdir(this.blobDir)) {
       const d = path.join(this.blobDir, sub);
       for (const f of await fs.promises.readdir(d)) {
         if (!f.endsWith('.gz')) continue;
         if (referenced.has(f.slice(0, -3))) { kept++; continue; }
         const st = await fs.promises.stat(path.join(d, f));
+        if (graceMs > 0 && now - st.mtimeMs < graceMs) { recent++; continue; }
         await fs.promises.unlink(path.join(d, f));
         deleted++; freedBytes += st.size;
       }
     }
-    return { deleted, kept, freedBytes };
+    return { deleted, kept, recent, freedBytes };
+  }
+
+  // Tatsaechlich belegter Platz (Chunks komprimiert, jeder Chunk nur einmal)
+  async usage() {
+    let chunks = 0, bytes = 0;
+    for (const sub of await fs.promises.readdir(this.blobDir)) {
+      const d = path.join(this.blobDir, sub);
+      for (const f of await fs.promises.readdir(d)) {
+        if (!f.endsWith('.gz')) continue;
+        chunks++;
+        bytes += (await fs.promises.stat(path.join(d, f))).size;
+      }
+    }
+    const snapshots = (await fs.promises.readdir(this.snapDir)).filter((f) => f.endsWith('.json')).length;
+    return { snapshots, chunks, bytes };
   }
 }

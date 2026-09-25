@@ -55,7 +55,8 @@ function migrateLegacy(dataDir, adminUser, log) {
 
 // dataDir: Ablage; token: optionaler Alt-Token (gilt als Client-Token des Admins);
 // adminUser/adminPassword: legen beim ersten Start den Admin an
-export function createServer({ dataDir, token, adminUser = 'admin', adminPassword, log = console, loginLimit } = {}) {
+// gcGraceMs: Schutzfrist fuer unreferenzierte Chunks beim Aufraeumen (Standard 1 h)
+export function createServer({ dataDir, token, adminUser = 'admin', adminPassword, log = console, loginLimit, gcGraceMs = 3600e3 } = {}) {
   if (!validUserName(adminUser)) throw new Error(`Ungueltiger Admin-Name "${adminUser}"`);
   fs.mkdirSync(dataDir, { recursive: true });
   migrateLegacy(dataDir, adminUser, log);
@@ -184,15 +185,19 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
       }
     }
 
-    // --- Snapshots und Chunks: immer die eigenen; Admins duerfen lesend ?user= angeben ---
+    // --- Snapshots und Chunks: immer die eigenen. Admins duerfen mit ?user=
+    //     fremde Snapshots ansehen, loeschen und dort aufraeumen, aber nichts hochladen ---
     const asked = url.searchParams.get('user');
     let target = who.name;
     if (asked && asked !== who.name) {
-      if (!who.admin || m !== 'GET') throw httpError(403, 'Nur Admins duerfen fremde Snapshots ansehen');
+      const adminWrite = (m === 'DELETE' && /^\/snapshots\/[^/]+$/.test(p)) || (m === 'POST' && p === '/gc');
+      if (!who.admin) throw httpError(403, 'Nur Admins duerfen fremde Snapshots ansehen');
+      if (m !== 'GET' && !adminWrite) throw httpError(403, 'Fremde Snapshots duerfen nur angesehen oder geloescht werden');
       if (!users.get(asked)) throw httpError(404, `Benutzer ${asked} nicht gefunden`);
       target = asked;
     }
     const store = storeFor(target);
+    if (p === '/usage' && m === 'GET') return send(res, 200, { user: target, gcGraceMinutes: Math.round(gcGraceMs / 60000), ...(await store.usage()) });
 
     const cm = p.match(/^\/snapshots\/([^/]+)\/chats$/);
     if (cm && m === 'GET') {
@@ -258,7 +263,11 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
         return send(res, 200, { ok: true });
       }
     }
-    if (p === '/gc' && m === 'POST') return send(res, 200, await store.gc());
+    if (p === '/gc' && m === 'POST') {
+      const r = await store.gc(gcGraceMs);
+      if (r.deleted) log.log(`Aufgeraeumt fuer ${target}: ${r.deleted} Chunks, ${r.freedBytes} Bytes`);
+      return send(res, 200, { ...r, gcGraceMinutes: Math.round(gcGraceMs / 60000) });
+    }
     throw httpError(404, `Unbekannter Endpunkt ${m} ${p}`);
   }
 

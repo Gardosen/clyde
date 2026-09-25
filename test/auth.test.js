@@ -117,8 +117,27 @@ test('Benutzer sind getrennt, Admin darf lesend hineinsehen', async () => {
   const admin = bearer('legacy-token');
   assert.deepEqual((await admin('GET', '/snapshots')).body.snapshots.map((s) => s.id), ['alt-1']);
   assert.deepEqual((await admin('GET', '/snapshots?user=bob')).body.snapshots.map((s) => s.id), ['bob-1']);
-  assert.equal((await admin('DELETE', '/snapshots/bob-1?user=bob')).status, 403, 'fremde Daten nur lesend');
-  assert.ok(fs.existsSync(path.join(DATA, 'u', 'bob', 'snapshots', 'bob-1.json')));
+  assert.equal((await admin('PUT', '/snapshots/x-1?user=bob', emptySnap('x-1'))).status, 403, 'in fremde Ablage nichts hochladen');
+  assert.equal((await bob('DELETE', '/snapshots/alt-1?user=marco')).status, 403, 'Nicht-Admins loeschen nichts Fremdes');
+  assert.equal((await admin('GET', '/usage?user=bob')).body.snapshots, 1);
+  assert.equal((await admin('DELETE', '/snapshots/bob-1?user=bob')).status, 200, 'Admin darf fremde Staende loeschen');
+  assert.ok(!fs.existsSync(path.join(DATA, 'u', 'bob', 'snapshots', 'bob-1.json')));
+  assert.equal((await admin('POST', '/gc?user=bob')).status, 200, 'und dort aufraeumen');
+});
+
+test('Aufraeumen laesst frische Chunks eine Stunde lang stehen', async () => {
+  const { Client } = await import('../src/client.js');
+  const { sha256 } = await import('../src/framing.js');
+  const c = new Client(BASE, 'legacy-token');
+  const data = Buffer.from('noch von keinem Stand referenziert');
+  await c.upload([{ hash: sha256(data), data }]);
+  const r = await c.gc();
+  assert.equal(r.deleted, 0);
+  assert.equal(r.recent, 1);
+  assert.equal(r.gcGraceMinutes, 60);
+  const u = await c.json('GET', '/usage');
+  assert.equal(u.chunks, 1);
+  assert.equal(u.snapshots, 1);
 });
 
 test('Token widerrufen, Passwort aendern meldet alte Sitzungen ab', async () => {
