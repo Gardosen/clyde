@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { sha256 } from './framing.js';
-import { canonicalizeBuf, localizeBuf, transformStream } from './rewrite.js';
+import { canonicalizeBuf, localizeFn, transformStream } from './rewrite.js';
 
 export const CHUNK_SIZE = 4 * 1024 * 1024;
 
@@ -16,9 +16,27 @@ export function canonicalSource(absPath, forms) {
   return forms.length ? transformStream(src, (b) => canonicalizeBuf(b, forms)) : src;
 }
 
-// Umkehrung fuer das Schreiben: Platzhalter durch die lokalen Werte ersetzen
-export function localizeStream(source, forms) {
-  return forms.length ? transformStream(source, (b) => localizeBuf(b, forms)) : source;
+// Umkehrung fuer das Schreiben: Platzhalter durch die lokalen Werte ersetzen.
+// mode (textMode des Pfads): jsonl prueft jede Zeile, json die ganze Datei
+// (bis 64 MiB im Speicher) auf gueltiges JSON.
+const JSON_WHOLE_LIMIT = 64 * 1024 * 1024;
+export async function* localizeStream(source, forms, mode = 'text') {
+  if (!forms.length) { yield* source; return; }
+  if (mode !== 'json') { yield* transformStream(source, (b) => localizeFn(mode)(b, forms)); return; }
+  const it = (source[Symbol.asyncIterator] || source[Symbol.iterator]).call(source);
+  const parts = [];
+  let len = 0;
+  let whole = true;
+  for (;;) {
+    const { value, done } = await it.next();
+    if (done) break;
+    parts.push(value);
+    len += value.length;
+    if (len > JSON_WHOLE_LIMIT) { whole = false; break; }
+  }
+  if (whole) { yield localizeFn('json')(Buffer.concat(parts), forms); return; }
+  const rest = (async function* () { yield* parts; for (;;) { const { value, done } = await it.next(); if (done) return; yield value; } })();
+  yield* transformStream(rest, (b) => localizeFn('text')(b, forms));
 }
 
 // Zerlegt einen Byte-Strom in 4-MiB-Chunks: {index, hash, data}
@@ -50,7 +68,7 @@ export async function* chunkStream(source) {
 // und ob die Datei "veraltet lokalisiert" ist: neutral und zurueck ergibt nicht
 // mehr die Originalbytes (z. B. nach einer neuen Projekt-Zuordnung). Solche Dateien
 // muss ein Pull neu schreiben, obwohl ihre neutrale Form unveraendert ist.
-export async function hashFile(absPath, forms) {
+export async function hashFile(absPath, forms, mode = 'text') {
   const chunks = [];
   let size = 0;
   if (!forms.length) {
@@ -62,7 +80,7 @@ export async function hashFile(absPath, forms) {
   const tapped = (async function* () { for await (const p of rawSource(absPath)) { rawHash.update(p); yield p; } })();
   const canonical = transformStream(tapped, (b) => canonicalizeBuf(b, forms));
   const chunkData = (async function* () { for await (const c of chunkStream(canonical)) { chunks.push(c.hash); size += c.data.length; yield c.data; } })();
-  for await (const b of transformStream(chunkData, (x) => localizeBuf(x, forms))) backHash.update(b);
+  for await (const b of localizeStream(chunkData, forms, mode)) backHash.update(b);
   return { chunks, size, stale: rawHash.digest('hex') !== backHash.digest('hex') };
 }
 

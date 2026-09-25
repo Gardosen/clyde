@@ -196,7 +196,7 @@ test('Projekt-Zuordnung: fehlender Projektordner wird erfragt, gespeichert und a
   const r = await pull(cBob(), { ask: async (q) => { asked.push(q); return bobsAegis; } }, log);
   assert.equal(asked.length, 1, 'genau ein fehlendes Projekt muss erfragt werden');
   assert.ok(asked[0].includes('C:\\Users\\bob\\Nextcloud\\Aegis') && asked[0].includes('gibt es hier nicht'), asked[0]);
-  assert.equal(r.changed, true);
+  assert.equal(r.changed, false, 'die Zuordnung hat die vorhandenen Chats schon umgestellt, der Pull hat nichts mehr zu tun');
   const cfg = loadConfig();
   assert.deepEqual(cfg.pathMap, { '@@CLYDE_HOME_RAW@@\\Nextcloud\\Aegis': bobsAegis });
   const key = pathVariants(bobsAegis).KEY;
@@ -211,7 +211,10 @@ test('Projekt-Zuordnung: fehlender Projektordner wird erfragt, gespeichert und a
   const lines = [];
   await map(cfg, { list: true }, { info: (s) => lines.push(s), warn() {} });
   assert.ok(lines.join('\n').includes(bobsAegis));
-  await map(cfg, { remove: '1' }, { info() {}, warn() {}, debug() {} });
+  const silent = { info() {}, warn() {}, debug() {} };
+  await assert.rejects(map(cfg, { remove: '1', noAsk: true }, silent), /--yes/, 'Entfernen braucht eine Bestaetigung');
+  assert.ok(fs.existsSync(path.join(D, 'projects', key, 'chat.jsonl')), 'ohne Bestaetigung bleibt alles, wo es ist');
+  await map(cfg, { remove: '1', yes: true }, silent);
   assert.deepEqual(loadConfig().pathMap, {});
   assert.ok(fs.existsSync(path.join(D, 'projects', 'C--Users-bob-Nextcloud-Aegis', 'chat.jsonl')), 'Entfernen der Zuordnung stellt die Dateien sofort zurueck');
   assert.ok(!fs.existsSync(path.join(D, 'projects', key)));

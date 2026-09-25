@@ -15,6 +15,7 @@ import { canonicalize, localize, allForms, normalizeHome } from './rewrite.js';
 import { fmtBytes } from './log.js';
 import { syncPush, prepare, localPlan, fetchLatest, resolveUnions, describe, remoteContent, localCanonical, projectChats } from './sync.js';
 import { flatten, saveBase } from './merge.js';
+import { changeMapping } from './remap.js';
 
 export { MANIFEST_VERSION } from './sync.js';
 
@@ -127,20 +128,31 @@ export async function resolveProjects(snap, cfg, opts, log) {
   }
   let cur = changed ? configFromRaw(raw) : cfg;
   const sourceForms = allForms(snap.home, snap.projectDrive, {});
-  const setMap = (canonical, localPath, shown) => {
+  // Zuordnung setzen: Chats des Projekts, die schon hier liegen, werden wie bei
+  // "clyde map --add" umgestellt (nur ihre Dateien). Im Trockenlauf nur planen.
+  const dryMaps = {};
+  const setMap = async (canonical, localPath, shown, { create = false } = {}) => {
+    const next = configFromRaw({ ...raw, pathMap: { ...(raw.pathMap || {}), ...dryMaps, [canonical]: localPath } });
+    let r;
+    try {
+      r = await changeMapping({ oldCfg: cur, newCfg: next, from: localize(canonical, cur.forms), to: localPath, title: `Zuordnung ${shown} -> ${localPath}`, opts, log, ask, onlyOnWarnings: true });
+    } catch (e) { log.warn(`  Zuordnung fuer ${shown} nicht gesetzt: ${e.message}`); return; }
+    if (opts.dryRun) { dryMaps[canonical] = localPath; cur = next; return; }
+    if (!r.applied) { log.warn(`  Zuordnung fuer ${shown} nicht gesetzt.`); return; }
+    if (create) fs.mkdirSync(localPath, { recursive: true });
     raw.pathMap = { ...(raw.pathMap || {}), [canonical]: localPath };
-    changed = true;
+    saveConfig(raw); // sofort: umgestellte Dateien und Konfiguration muessen zusammenpassen
     cur = configFromRaw(raw);
     log.info(`  Zuordnung gespeichert: ${shown} -> ${localPath}`);
   };
+  const freeDir = (dir) => { let d = dir; for (let i = 2; fs.existsSync(d) && fs.readdirSync(d).length; i++) d = `${dir}-${i}`; return d; };
   for (const canonical of Array.isArray(snap.projects) ? snap.projects : []) {
     const local = localize(canonical, cur.forms);
     if (!/@@CLYDE_/.test(local) && fs.existsSync(local)) continue;
     const shown = localize(canonical, sourceForms);
     if (opts.createMissing) {
-      const dir = normalizeHome(path.join(path.resolve(opts.createMissing), lastSegment(shown)));
-      fs.mkdirSync(dir, { recursive: true });
-      setMap(canonical, dir, shown);
+      const dir = freeDir(normalizeHome(path.join(path.resolve(opts.createMissing), lastSegment(shown))));
+      await setMap(canonical, dir, shown, { create: true });
       continue;
     }
     const chats = opts.chatTitles?.get(canonical) || [];
@@ -153,7 +165,7 @@ export async function resolveProjects(snap, cfg, opts, log) {
     if (!answer) continue;
     const localPath = normalizeHome(path.resolve(answer.replace(/^["']|["']$/g, '')));
     if (!fs.existsSync(localPath)) { log.warn(`${localPath} existiert nicht, uebersprungen.`); continue; }
-    setMap(canonical, localPath, shown);
+    await setMap(canonical, localPath, shown);
   }
   if (changed) saveConfig(raw);
   cur.missingProjects = missing;
@@ -225,6 +237,7 @@ export async function pull(cfg, opts, log) {
   const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r));
   const plan = localPlan(cfg, decisions, snap);
   const s = describe(decisions);
+  if (plan.stale) log.warn(`${plan.stale} Dateien enthalten Stellen, die Clyde nicht verlustfrei umschreiben kann (z. B. beschaedigte Zeilen); sie bleiben unveraendert.`);
   log.info(`Plan: ${plan.write.length} Dateien neu oder aktualisiert (${fmtBytes(plan.bytesToWrite)}), ${s.pullDelete} auf einem anderen PC geloescht${s.union ? `, ${s.union} zeilenweise zusammengefuehrt` : ''}${s.conflicts - s.union ? `, ${s.conflicts - s.union} Konflikte nach Datum entschieden` : ''}. Eigene Aenderungen, die noch hochzuladen sind: ${s.push + s.pushDelete + s.union}.`);
   return finishPull({ cfg, opts, log, snap, local, plan, client, extra, summary: { pending: s.push + s.pushDelete + s.union }, baseFiles: R });
 }

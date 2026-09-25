@@ -5,9 +5,14 @@ import { pipeline } from 'node:stream/promises';
 import { chunkStream, canonicalSource, localizeStream } from './chunker.js';
 import { backupsDir, chunkCacheDir } from './paths.js';
 import { loadCache, saveCache, formsFor, formsKey } from './scan.js';
+import { textMode } from './rewrite.js';
 import { fmtBytes } from './log.js';
 
-// Kopiert alle Roots nach ~/.clyde/backups/<Zeitstempel>/ und raeumt alte Backups auf
+// Pull-Sicherungen heissen nur nach dem Zeitstempel; nur sie werden aufgeraeumt.
+// Sicherungen mit Namen (map-..., relocate-...) bleiben, bis der Nutzer sie loescht.
+const PULL_BACKUP = /^\d{4}-\d{2}-\d{2}T[\d-]+Z$/;
+
+// Kopiert alle Roots nach ~/.clyde/backups/<Zeitstempel>/ und raeumt alte Pull-Sicherungen auf
 export async function makeBackup(cfg, log) {
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const dest = path.join(backupsDir(), ts);
@@ -24,7 +29,7 @@ export async function makeBackup(cfg, log) {
     copied++;
   }
   try {
-    const older = (await fs.promises.readdir(backupsDir())).filter((d) => d !== ts).sort();
+    const older = (await fs.promises.readdir(backupsDir())).filter((d) => d !== ts && PULL_BACKUP.test(d)).sort();
     const keepOlder = Math.max(0, cfg.backupsToKeep - 1);
     for (const d of older.slice(0, Math.max(0, older.length - keepOlder))) {
       await fs.promises.rm(path.join(backupsDir(), d), { recursive: true, force: true });
@@ -32,6 +37,20 @@ export async function makeBackup(cfg, log) {
     }
   } catch { /* kein Backup-Ordner */ }
   return copied ? dest : null;
+}
+
+// Sichert einzelne Dateien unter ~/.clyde/backups/<label>-<Zeitstempel>/<root>/<pfad>;
+// wird nie automatisch aufgeraeumt. items: [{root, lp, abs}]
+export async function backupFiles(label, items, log) {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const dest = path.join(backupsDir(), `${label}-${ts}`);
+  for (const it of items) {
+    const target = path.join(dest, it.root, ...it.lp.split('/'));
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    await fs.promises.copyFile(it.abs, target);
+  }
+  log.debug(`${items.length} Dateien gesichert: ${dest}`);
+  return dest;
 }
 
 // Legt einen Verzeichnis-Link an. Fehlt das Ziel, wird es angelegt, sofern sein
@@ -62,7 +81,7 @@ async function ensureLink(ln, log) {
   }
 }
 
-async function pruneEmptyDirs(dir, rootSet) {
+export async function pruneEmptyDirs(dir, rootSet) {
   for (;;) {
     if (rootSet.has(path.resolve(dir))) return;
     let st;
@@ -148,7 +167,7 @@ export async function applyPlan({ cfg, local, plan, client, opts, log, extra }) 
     await fs.promises.mkdir(path.dirname(f.abs), { recursive: true });
     const tmp = `${f.abs}.clyde-tmp`;
     const canonical = (async function* () { for (const h of f.c) yield await fs.promises.readFile(stagedPath(h)); })();
-    await pipeline(Readable.from(localizeStream(canonical, forms)), fs.createWriteStream(tmp));
+    await pipeline(Readable.from(localizeStream(canonical, forms, textMode(f.lp))), fs.createWriteStream(tmp));
     await fs.promises.rename(tmp, f.abs);
     await fs.promises.utimes(f.abs, new Date(), new Date(f.m));
     const st = await fs.promises.stat(f.abs);

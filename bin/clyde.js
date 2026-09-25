@@ -20,9 +20,12 @@ Befehle
        [--create-missing DIR]       fehlende Projektordner unter DIR anlegen (z. B. auf dem Mac)
   pull ID --exact                   einen Stand exakt herstellen (lokale Abweichungen weg)
   merge ID ID [...]                 gespeicherte Staende zu einem gemeinsamen Stand fusionieren
-  map [--list | --remove N]         Projekt-Zuordnungen anzeigen oder entfernen
+  map [--list]                      Projekt-Zuordnungen anzeigen
   map --add NEUTRAL PFAD [--create] Projekt-Zuordnung setzen, --create legt den Ordner an
-                                    (Befehl steht in der pull-Meldung)
+                                    (Befehl steht in der pull-Meldung); stellt nur die Chats
+                                    dieses Projekts um. Erst mit --dry-run pruefen, dann
+                                    im Terminal bestaetigen oder --yes anhaengen
+  map --remove N [--dry-run|--yes]  Projekt-Zuordnung entfernen, Chats zurueckstellen
   status [-v]                       Unterschiede zum letzten Snapshot, laufende Chats
   list                              Snapshots auf dem Server auflisten
   doctor                            Pfade, Platzhalter, Prozesse und Server pruefen
@@ -36,7 +39,8 @@ Optionen
   --clyde-chat   den aufrufenden Chat der App dauerhaft als Clyde-Chat registrieren;
                  er wird nie hochgeladen und bei keinem Pull angefasst
   --force        trotz arbeitender Chats bzw. laufender App ausfuehren (nicht empfohlen)
-  --dry-run      bei pull nur anzeigen, was passieren wuerde
+  --dry-run      bei pull und map nur anzeigen, was passieren wuerde
+  --yes          bei map ohne Rueckfrage ausfuehren (fuer Plugin und Skripte)
   --no-backup    bei pull kein Backup unter ~/.clyde/backups anlegen
   --no-ask       bei pull fehlende Projektordner nur melden, nicht nachfragen
   -v, --verbose  mehr Details
@@ -75,6 +79,7 @@ try {
       'no-backup': { type: 'boolean', default: false },
       'no-ask': { type: 'boolean', default: false },
       create: { type: 'boolean', default: false },
+      yes: { type: 'boolean', short: 'y', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -98,7 +103,7 @@ const opts = {
   remove: values.remove, add: values.add, list: values.list, clydeChat: values['clyde-chat'],
   plan: expandHome(values.plan), chat: values.chat, to: expandHome(values.to), undo: expandHome(values.undo),
   exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
-  force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], verbose: values.verbose,
+  force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
 const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots };

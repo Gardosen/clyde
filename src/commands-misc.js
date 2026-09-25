@@ -12,7 +12,8 @@ import { configPath } from './paths.js';
 import { normalizeHome, normalizeDrive, localize } from './rewrite.js';
 import { loadLast, registerClydeChat } from './commands.js';
 import { planRelocation, applyRelocation, undoRelocation } from './relocate.js';
-import { fetchLatest, prepare, describe, relocalize } from './sync.js';
+import { fetchLatest, prepare, describe } from './sync.js';
+import { changeMapping } from './remap.js';
 import { configFromRaw } from './config.js';
 import { fmtBytes } from './log.js';
 
@@ -41,6 +42,8 @@ function describeMapping(cfg) {
   lines.push(n ? `${n} Projekt-Zuordnung(en), siehe "clyde map --list"` : 'keine Projekt-Zuordnungen (entstehen bei "clyde pull", wenn ein Projektordner hier fehlt)');
   return lines;
 }
+
+const askFor = (opts) => opts.ask || (opts.noAsk || !process.stdin.isTTY ? null : ttyAsk);
 
 async function ttyAsk(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -107,28 +110,32 @@ export async function map(cfg, opts, log) {
     const [canonical, localRaw] = opts.args || [];
     if (!canonical || !localRaw) throw new Error('Aufruf: clyde map --add "NEUTRALER-PFAD" "PFAD-AUF-DIESEM-PC" [--create]   (der neutrale Pfad steht in der Meldung von clyde pull)');
     const localPath = normalizeHome(path.resolve(localRaw.replace(/^["']|["']$/g, '')));
-    if (!fs.existsSync(localPath)) {
-      if (!opts.create) throw new Error(`${localPath} existiert nicht (mit --create wird er angelegt).`);
-      fs.mkdirSync(localPath, { recursive: true });
-      log.info(`Ordner angelegt: ${localPath}`);
-    }
+    const exists = fs.existsSync(localPath);
+    if (!exists && !opts.create) throw new Error(`${localPath} existiert nicht (mit --create wird er angelegt).`);
     const raw = { ...cfg.raw, pathMap: { ...(cfg.raw.pathMap || {}), [canonical]: localPath } };
-    // Chats, die schon ohne Zuordnung hier liegen, sofort an den neuen Ort bringen
-    await relocalize(cfg, configFromRaw(raw), [canonical, localize(canonical, cfg.forms), cfg.pathMap[canonical]], opts, log);
+    // Chats dieses Projekts, die schon hier liegen, an den neuen Ort bringen; nur ihre
+    // Dateien, nach Plan und Bestaetigung
+    const from = localize(canonical, cfg.forms);
+    const r = await changeMapping({ oldCfg: cfg, newCfg: configFromRaw(raw), from, to: localPath, title: `Zuordnung ${canonical} -> ${localPath}${exists ? '' : ' (Ordner wird angelegt)'}`, opts, log, ask: askFor(opts) });
+    if (!r.applied) return r;
+    if (!exists) { fs.mkdirSync(localPath, { recursive: true }); log.info(`Ordner angelegt: ${localPath}`); }
     saveConfig(raw);
     log.info(`Zuordnung gespeichert: ${canonical} -> ${localPath}`);
-    return;
+    return r;
   }
   if (opts.remove !== undefined) {
     const i = Number(opts.remove) - 1;
     if (!(i >= 0 && i < entries.length)) throw new Error(`Aufruf: clyde map --remove NUMMER   (1..${entries.length}, siehe clyde map --list)`);
     const raw = { ...cfg.raw, pathMap: { ...cfg.raw.pathMap } };
     delete raw.pathMap[entries[i][0]];
-    // Dateien, die unter der alten Zuordnung liegen, sofort zurueckstellen
-    await relocalize(cfg, configFromRaw(raw), [entries[i][1]], opts, log);
+    // Chats unter der alten Zuordnung zurueckstellen
+    const newCfg = configFromRaw(raw);
+    const to = localize(entries[i][0], newCfg.forms);
+    const r = await changeMapping({ oldCfg: cfg, newCfg, from: entries[i][1], to, title: `Zuordnung ${i + 1} entfernen: ${entries[i][0]} -> ${entries[i][1]} (Chats zurueck nach ${to})`, opts, log, ask: askFor(opts) });
+    if (!r.applied) return r;
     saveConfig(raw);
     log.info(`Zuordnung ${i + 1} entfernt: ${entries[i][0]} -> ${entries[i][1]}`);
-    return;
+    return r;
   }
   if (!entries.length) { log.info('Keine Projekt-Zuordnungen. Sie entstehen bei "clyde pull", wenn ein Projektordner hier fehlt.'); return; }
   entries.forEach(([c, l], i) => log.info(`${String(i + 1).padStart(2)}. ${c}\n    -> ${l}`));

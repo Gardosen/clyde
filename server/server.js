@@ -249,7 +249,7 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
       }
       if (m === 'PUT') {
         const man = await readJson(req);
-        if (man.id !== id || ![1, 2].includes(man.version) || typeof man.roots !== 'object') throw httpError(400, 'Manifest ungueltig');
+        if (man.id !== id || ![1, 2, 3].includes(man.version) || typeof man.roots !== 'object') throw httpError(400, 'Manifest ungueltig');
         const hashes = [...manifestHashes(man)];
         if (!hashes.every(isHash)) throw httpError(400, 'Chunk-Hash ungueltig');
         const missing = await store.missing(hashes);

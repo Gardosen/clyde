@@ -109,3 +109,21 @@ test('nur Textdateien werden umgeschrieben', () => {
   assert.ok(isTextFile('a/b.jsonl') && isTextFile('x.JSON') && isTextFile('n.md') && isTextFile('t.txt'));
   assert.ok(!isTextFile('bild.png') && !isTextFile('abc@v2') && !isTextFile('ohne'));
 });
+
+test('woertliche Platzhalter werden maskiert und exakt zurueckgesetzt, auch mehrfach maskierte', () => {
+  const forms = allForms('C:\\Users\\warro', 'D', {});
+  const text = 'echt C:\\Users\\warro\\a, woertlich @@CLYDE_HOME_RAW@@ @@CLYDE_DRIVE_KEY@@x @@CLYDE_ESC_HOME_J1@@ @@CLYDE_ESC_ESC_y @@CLYDE_';
+  const n = canonicalize(text, forms);
+  assert.ok(n.startsWith('echt @@CLYDE_HOME_RAW@@\\a'));
+  assert.ok(n.includes('@@CLYDE_ESC_HOME_RAW@@ @@CLYDE_ESC_DRIVE_KEY@@x @@CLYDE_ESC_ESC_HOME_J1@@ @@CLYDE_ESC_ESC_ESC_y @@CLYDE_ESC_'), n);
+  assert.equal(localize(n, forms), text);
+});
+
+test('PC ohne Laufwerk (Mac): unbekannte Platzhalter bleiben stehen, die neutrale Form bleibt stabil', () => {
+  const win = allForms('C:\\Users\\warro', 'D', {});
+  const mac = allForms('/Users/warro', null, {});
+  const n = canonicalize('{"p":"D:\\\\Aegis","t":"woertlich @@CLYDE_DRIVE_RAW@@ und @@CLYDE_HOME_RAW@@"}', win);
+  const onMac = localize(n, mac);
+  assert.ok(onMac.includes('"p":"@@CLYDE_DRIVE_J1@@Aegis"'), onMac);
+  assert.equal(canonicalize(onMac, mac), n, 'Mac aendert beim naechsten Push nichts an der neutralen Form');
+});

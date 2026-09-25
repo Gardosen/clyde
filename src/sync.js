@@ -1,8 +1,6 @@
 // Push und Pull als Zusammenfuehren (Standard seit 0.4) und das Fusionieren
 // zweier gespeicherter Staende ("clyde merge").
 import os from 'node:os';
-import fs from 'node:fs';
-import path from 'node:path';
 import { Client } from './client.js';
 import { buildLocalManifest, absFor, formsFor } from './scan.js';
 import { applyPlan } from './restore.js';
@@ -13,12 +11,16 @@ import { readAppGroups } from './appgroups.js';
 import { loadBase, saveBase, flatten, decide, unionLines, chunksOf, sigOf } from './merge.js';
 import { fmtBytes } from './log.js';
 
-export const MANIFEST_VERSION = 2;
+// v3 (0.4.2): woertliche Platzhalter im Inhalt sind maskiert (@@CLYDE_ESC_).
+// Staende v2 lassen sich weiter lesen; Clyde < 0.4.2 lehnt v3 ab und kann so
+// maskierte Inhalte nicht falsch einsetzen.
+export const MANIFEST_VERSION = 3;
+const READABLE = [2, 3];
 
 export async function fetchLatest(client, id) {
   try {
     const snap = await client.getSnapshot(id || 'latest');
-    if (snap.version !== MANIFEST_VERSION) throw new Error(`Snapshot ${snap.id} hat Format v${snap.version}, dieser Client braucht v${MANIFEST_VERSION}. Auf einem PC mit aktuellem Clyde neu pushen.`);
+    if (!READABLE.includes(snap.version)) throw new Error(`Snapshot ${snap.id} hat Format v${snap.version}, dieser Client kennt v${READABLE.join(', v')}. ${snap.version > MANIFEST_VERSION ? 'Clyde auf diesem PC aktualisieren.' : 'Auf einem PC mit aktuellem Clyde neu pushen.'}`);
     return snap;
   } catch (e) {
     if (!id && /HTTP 404/.test(e.message)) return null;
@@ -46,7 +48,8 @@ async function resolveUnions(decisions, getA, getB) {
     if (!d.union) continue;
     const [a, b] = [await getA(d), await getB(d)];
     const aNewer = (d.l.m || 0) >= (d.r.m || 0);
-    const buf = aNewer ? unionLines(a, b) : unionLines(b, a);
+    const byUuid = d.p.toLowerCase().endsWith('.jsonl');
+    const buf = aNewer ? unionLines(a, b, { byUuid }) : unionLines(b, a, { byUuid });
     const chunks = await chunksOf(buf);
     for (const c of chunks) extra.set(c.hash, c.data);
     d.merged = { root: d.root, p: d.p, s: buf.length, m: Math.max(d.l.m || 0, d.r.m || 0), c: chunks.map((c) => c.hash) };
@@ -193,6 +196,7 @@ export async function syncPush(cfg, opts, log) {
     try { await client.putSnapshot(manifest); }
     catch (e) {
       if (/HTTP 409/.test(e.message) && /geaendert|geändert/.test(e.message) && attempt < 3) { log.warn('Ein anderer PC hat gerade hochgeladen; fuehre erneut zusammen ...'); continue; }
+      if (/HTTP 400/.test(e.message) && /Manifest ungueltig/.test(e.message)) throw new Error(`Der Server kennt das Stand-Format v${MANIFEST_VERSION} noch nicht. Server aktualisieren (git pull, dann docker compose up -d --build) und erneut pushen.`);
       throw e;
     }
     saveBase(cfg, L, manifest.id);
@@ -201,23 +205,26 @@ export async function syncPush(cfg, opts, log) {
   }
 }
 
-// Lokale Schreib-/Loeschliste aus den Entscheidungen (auch fuer verschobene oder
-// neu zu lokalisierende Dateien, z. B. nach einer neuen Projekt-Zuordnung)
+// Lokale Schreib-/Loeschliste aus den Entscheidungen (auch fuer verschobene Dateien).
+// Dateien, deren Inhalt sich nicht verlustfrei neutral und zurueck wandeln laesst
+// (stale), werden nur gezaehlt, nie "vorsorglich" neu geschrieben.
 export function localPlan(cfg, decisions, snap) {
-  const plan = { write: [], delete: [], links: [], unchanged: 0, bytesToWrite: 0 };
+  const plan = { write: [], delete: [], links: [], unchanged: 0, bytesToWrite: 0, stale: 0 };
   for (const d of decisions) {
     const root = cfg.roots[d.root];
     if (!root) continue;
     const lp = localize(d.p, cfg.forms);
-    const target = d.local === 'write' ? d.merged : d.local === 'none' ? d.l : null;
     const moved = d.l && d.local !== 'delete' && d.l.lp !== lp;
     if (d.local === 'delete') { plan.delete.push({ root: d.root, p: d.p, lp: d.l.lp, abs: absFor(root, d.l.lp) }); continue; }
-    if (d.local === 'write' || moved || (d.l && d.l.stale && target)) {
+    if (d.local === 'write' || moved) {
       const f = d.local === 'write' ? d.merged : d.l;
       plan.write.push({ root: d.root, p: d.p, lp, s: f.s, m: f.m, c: f.c, abs: absFor(root, lp), isNew: !d.l });
       plan.bytesToWrite += f.s;
       if (moved) plan.delete.push({ root: d.root, p: d.p, lp: d.l.lp, abs: absFor(root, d.l.lp) });
-    } else plan.unchanged++;
+    } else {
+      plan.unchanged++;
+      if (d.l?.stale) plan.stale++;
+    }
   }
   for (const [name, r] of Object.entries(snap?.roots || {})) {
     const root = cfg.roots[name];
@@ -270,10 +277,6 @@ export async function mergeSnapshots(cfg, opts, log) {
   return { manifest };
 }
 
-// Nach einer geaenderten Projekt-Zuordnung die lokalen Dateien sofort auf die neuen
-// Regeln umstellen: an den neuen Ort verschieben und Pfade im Inhalt neu einsetzen.
-// So bleibt die neutrale Form jeder Datei gleich, und der naechste Abgleich sieht
-// keine scheinbar geloeschten oder neuen Chats.
 // Welche Chats gehoeren zu welchem Projektordner? Aus der Chatliste im Stand
 // (neutrale Pfade wie in snap.projects) -> Titel
 export async function projectChats(client, snap) {
@@ -295,39 +298,6 @@ export async function projectChats(client, snap) {
     } catch { /* kein Chat-Eintrag */ }
   }
   return out;
-}
-
-// markerPaths: Pfade (lokal oder neutral), an deren Vorkommen im Inhalt eine Datei
-// als betroffen erkannt wird, auch wenn sich ihr Ablageort nicht aendert
-export async function relocalize(oldCfg, newCfg, markerPaths, opts, log) {
-  const { pathVariants } = await import('./rewrite.js');
-  const markers = [...new Set(markerPaths.filter(Boolean).flatMap((p) => Object.values(pathVariants(p))))]
-    .filter((v) => v.length > 3).map((v) => Buffer.from(v));
-  const local = await buildLocalManifest(oldCfg, log);
-  const plan = { write: [], delete: [], links: [], unchanged: 0, bytesToWrite: 0 };
-  for (const [name, r] of Object.entries(local.roots)) {
-    const root = newCfg.roots[name];
-    if (!root) continue;
-    for (const f of r.files) {
-      const lp = localize(f.p, newCfg.forms);
-      let rewrite = lp !== f.lp;
-      if (!rewrite && formsFor(newCfg, root, lp).length && markers.length) {
-        const raw = await fs.promises.readFile(absFor(root, f.lp));
-        rewrite = markers.some((m) => raw.includes(m));
-      }
-      if (!rewrite) continue;
-      plan.write.push({ root: name, p: f.p, lp, s: f.s, m: f.m, c: f.c, abs: absFor(root, lp), isNew: lp !== f.lp });
-      if (lp !== f.lp) plan.delete.push({ root: name, p: f.p, lp: f.lp, abs: absFor(root, f.lp) });
-    }
-  }
-  if (!plan.write.length) return { moved: 0, rewritten: 0 };
-  const { checkGuard } = await import('./guard.js');
-  checkGuard('Umstellen der Zuordnung', opts.force, log);
-  const noServer = { fetchBlobs: async () => { throw new Error('Datei hat sich waehrend des Umstellens geaendert'); } };
-  await applyPlan({ cfg: newCfg, local, plan, client: noServer, opts: { ...opts, noBackup: false }, log });
-  const moved = plan.delete.length;
-  log.info(`${moved} Dateien an den neuen Ort verschoben, ${plan.write.length - moved} Dateien mit neuen Pfaden versehen.`);
-  return { moved, rewritten: plan.write.length - moved };
 }
 
 export { sigOf, applyPlan, resolveUnions, describe, remoteContent, localCanonical };

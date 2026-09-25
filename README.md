@@ -147,7 +147,28 @@ pulling:
 All spellings are replaced (`C:\Users\alice`, `C:\\Users\\alice`,
 `C:/Users/alice`, `/c/Users/alice`, `C--Users-alice`), only in text files and never
 in the file history. The server only sees the neutral form, so the data is the
-same on every computer, and a push right after a pull uploads nothing.
+same on every computer, and a push right after a pull uploads nothing. Text that
+merely looks like a placeholder (for example a chat about Clyde itself) is
+escaped and comes back unchanged. A transcript line that would stop being valid
+JSON after the paths are put back is left as it is instead.
+
+A project mapping means "folder X on the other computers is folder Y here" for
+all synced text. Setting or removing one only moves the chats whose project folder
+it is: their transcripts, chat list entries, todos and their lines in the prompt
+history. Other files that merely mention the old path stay byte for byte as they
+are. Check first, then confirm:
+
+```bash
+clyde map --add "C:\Aegis" "D:\Aegis" --dry-run
+clyde map --add "C:\Aegis" "D:\Aegis" --yes
+```
+
+The dry run lists the affected chats, how many files and lines change, and warns
+if Y is already the project folder of other chats here or already mentioned in
+the affected files. After the change, both meanings are the same project on every
+computer. Without `--yes` Clyde asks in the terminal. From the plugin it changes
+nothing without `--yes`. If a chat of that project is busy, nothing happens. The
+originals are kept in `~/.clyde/backups/map-<time>`.
 
 ## Running the backend
 
@@ -249,12 +270,15 @@ placeholders, running chats and whether server and token work.
 | `clyde merge ID ID [...]` | Merge stored snapshots into a new shared state |
 | `clyde status` | What is waiting to be pushed or pulled, busy chats |
 | `clyde list` | Snapshots on the server |
-| `clyde map --list` / `--add` / `--remove N` | Project mappings |
+| `clyde map --list` | Show project mappings |
+| `clyde map --add NEUTRAL PATH [--create]` | Add a mapping; check with `--dry-run`, confirm with `--yes` |
+| `clyde map --remove N` | Remove a mapping and move its chats back; `--dry-run` / `--yes` as above |
 | `clyde doctor` | Check the setup |
 | `clyde delete ID`, `clyde gc` | Delete a snapshot, free space |
 
 Before every pull Clyde copies the previous state to
-`%USERPROFILE%\.clyde\backups\<timestamp>`; the last three are kept.
+`%USERPROFILE%\.clyde\backups\<timestamp>`; the last three are kept. Backups
+with a name (`map-…`, `relocate-…`) are never removed automatically.
 
 ## Moving chats to a different project folder
 
@@ -304,9 +328,11 @@ output names the backup folder.
   again.
 - **Pull:** chunks already present locally are reused, the rest is downloaded.
   Files are written completely first and then renamed atomically.
-- **Mappings:** when a project mapping is added or removed, Clyde moves the
-  affected chats right away so that the next sync does not see them as deleted
-  and new.
+- **Mappings:** when a project mapping is added or removed, Clyde moves the chats
+  of that project right away so that the next sync does not see them as deleted
+  and new. Files that cannot be converted to the neutral form and back without
+  loss are never rewritten "just in case" by a pull; Clyde reports how many there
+  are.
 
 ## Security
 
@@ -334,6 +360,11 @@ output names the backup folder.
   because that file also holds all other app settings.
 - Snapshots in the old v1 format are rejected by the client; push again from the
   source computer.
+- **Format v3 (0.4.2):** snapshots now escape literal placeholders. The server
+  must be 0.4.2 or newer to store them, and clients older than 0.4.2 refuse them
+  instead of misreading them. Update the server first, then every computer.
+- A computer without a project drive (a Mac) keeps drive placeholders from other
+  computers as they are; this includes escaped ones in chats about Clyde.
 
 ## Development
 

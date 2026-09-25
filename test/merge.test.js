@@ -153,7 +153,13 @@ test('Fehlender Projektordner: Meldung nennt die Chats, Zuordnung per map --add 
   const canon = /clyde map --add "([^"]+)"/.exec(w)[1];
   assert.deepEqual(chatsOn(P), ['Aegis', 'Talesweaver'], 'Chats kommen auch ohne Ordner');
   const target = path.join(P, 'Spiele', 'X');
-  await map(loadConfig(), { add: true, create: true, args: [canon, target] }, quiet);
+  const before = fs.readdirSync(path.join(P, 'projects')).sort();
+  await assert.rejects(map(loadConfig(), { add: true, create: true, noAsk: true, args: [canon, target] }, quiet), /--yes/, 'ohne Bestaetigung wird nichts umgestellt');
+  assert.deepEqual(fs.readdirSync(path.join(P, 'projects')).sort(), before);
+  assert.ok(!fs.existsSync(target) && !Object.keys(loadConfig().pathMap).length, 'weder Ordner noch Zuordnung');
+  await map(loadConfig(), { add: true, create: true, dryRun: true, args: [canon, target] }, quiet);
+  assert.ok(!fs.existsSync(target), 'Trockenlauf legt nichts an');
+  await map(loadConfig(), { add: true, create: true, yes: true, args: [canon, target] }, quiet);
   assert.ok(fs.existsSync(target), '--create legt den Ordner an');
   assert.ok(fs.existsSync(path.join(P, 'projects', target.replace(/[^A-Za-z0-9]/g, '-'), 'aaaa-1.jsonl')), 'vorhandener Chat an den zugeordneten Ort verschoben');
   assert.equal(JSON.parse(R(path.join(P, 'sessions', 'org', 'acct', 'local_aaaa-1.json'))).cwd, target);

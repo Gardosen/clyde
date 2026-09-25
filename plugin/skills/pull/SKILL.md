@@ -29,7 +29,8 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
    `~/ClydeProjekte/<Name>` anlegen soll (dann
    `clyde pull $ARGUMENTS --clyde-chat --no-ask --create-missing ~/ClydeProjekte`
    als Trockenlauf mit `--dry-run` und danach echt) oder ob der Nutzer einzeln
-   entscheiden will. Sonst, oder wenn einzeln gewuenscht, fuer jede Meldung
+   entscheiden will. Meldet der echte Lauf „Zuordnung fuer ... nicht gesetzt",
+   diesen Ordner wie unten einzeln klaeren. Sonst, oder wenn einzeln gewuenscht, fuer jede Meldung
    „Projektordner ... gibt es hier nicht" (mit den betroffenen Chats und einer
    Zeile `clyde map --add "<NEUTRAL>" ...`) den Nutzer mit **AskUserQuestion**
    fragen, hoechstens vier Ordner pro Aufruf:
@@ -40,13 +41,24 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
      2. **Ordner anlegen** – Beschreibung: „Clyde legt `~/ClydeProjekte/<Name>` an."
      3. **Vorerst weglassen** – Beschreibung: „Chats kommen trotzdem, der Ordner
         laesst sich spaeter zuordnen."
-   Danach je Antwort:
-   - Pfad: `clyde map --add "<NEUTRAL>" "<PFAD>"` (den neutralen Pfad exakt aus der
-     Meldung uebernehmen). Existiert der Pfad nicht, nachfragen, ob er angelegt
-     werden soll, dann mit `--create`.
-   - Ordner anlegen: `clyde map --add "<NEUTRAL>" "~/ClydeProjekte/<Name>" --create`
+   Danach je Antwort (den neutralen Pfad exakt aus der Meldung uebernehmen):
+   - Pfad: Existiert der Pfad nicht, nachfragen, ob er angelegt werden soll (dann
+     mit `--create`).
+   - Ordner anlegen: Pfad `~/ClydeProjekte/<Name>` mit `--create`.
    - Weglassen: nichts tun.
-   Danach den Trockenlauf wiederholen.
+
+   **Zuordnung nie ungeprueft setzen.** Erst den Plan holen:
+   `clyde map --add "<NEUTRAL>" "<PFAD>" [--create] --dry-run`
+   Er nennt die betroffenen Chats und wie viele Dateien und Zeilen sich aendern.
+   Jede Zeile `Achtung:` woertlich an den Nutzer weitergeben. Besonders wichtig
+   ist „ist hier schon Projektordner von …": Danach gelten beide Ordner als
+   dasselbe Projekt, auch auf den anderen PCs. Dann mit **AskUserQuestion**
+   bestaetigen lassen, mit den Optionen „Zuordnung setzen" und „Nicht setzen".
+   Ohne Warnung reicht eine kurze Rueckfrage. Erst nach Zustimmung ausfuehren:
+   `clyde map --add "<NEUTRAL>" "<PFAD>" [--create] --yes`
+   Meldet Clyde, dass Chats des Projekts arbeiten, spaeter erneut versuchen, nie
+   mit `--force`.
+   Danach den Trockenlauf des Pulls wiederholen.
 
 3. **Plan zeigen:** die Zeile `Plan: ...` kurz wiedergeben. Werden Chats
    entfernt, weil sie auf einem anderen PC geloescht wurden, diese Chats nennen
@@ -59,6 +71,7 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
 
 5. **Ergebnis melden:** wie viele Chats neu oder aktualisiert sind, wie viele
    eigene Aenderungen noch hochzuladen sind (dann `/clyde:push` empfehlen), Ort
-   der Sicherung. Jede Zeile `Hinweis:` weitergeben, besonders: geoeffnete Chats
+   der Sicherung. Die Warnung „... nicht verlustfrei umschreiben ..." weitergeben
+   (diese Dateien bleiben unveraendert). Jede Zeile `Hinweis:` weitergeben, besonders: geoeffnete Chats
    erst nach einem Neustart der App weiterverwenden; neue Chats erscheinen in der
    Seitenleiste eventuell erst nach einem Neustart.

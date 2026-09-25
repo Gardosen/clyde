@@ -55,17 +55,25 @@ export const splitKey = (k) => { const i = k.indexOf('\u0000'); return { root: k
 export const unionable = (p) => p.toLowerCase().endsWith('.jsonl') || /(^|\/)MEMORY\.md$/i.test(p);
 
 // Zeilen zusammenfuehren: die neuere Fassung bestimmt die Reihenfolge, fehlende
-// Zeilen der anderen werden in ihrer Reihenfolge angehaengt
-export function unionLines(newer, older) {
+// Zeilen der anderen werden in ihrer Reihenfolge angehaengt. byUuid (Transkripte):
+// eine Zeile mit derselben "uuid" wie eine Zeile der neueren Fassung ist dieselbe
+// Nachricht, auch wenn sie sich in der Schreibweise unterscheidet.
+const uuidOf = (line) => {
+  if (!line.includes('"uuid"')) return null;
+  try { const u = JSON.parse(line).uuid; return typeof u === 'string' && u ? u : null; } catch { return null; }
+};
+export function unionLines(newer, older, { byUuid = false } = {}) {
   const a = newer.toString('utf8');
   const b = older.toString('utf8');
   const aLines = a.split('\n');
   const endsNl = a.endsWith('\n') || (!a.length && b.endsWith('\n'));
   if (aLines[aLines.length - 1] === '') aLines.pop();
   const seen = new Set(aLines);
+  const uuids = byUuid ? new Set(aLines.map(uuidOf).filter(Boolean)) : null;
   const extra = [];
   for (const line of b.split('\n')) {
     if (line === '' || seen.has(line)) continue;
+    if (uuids) { const u = uuidOf(line); if (u && uuids.has(u)) continue; }
     seen.add(line);
     extra.push(line);
   }

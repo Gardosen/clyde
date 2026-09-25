@@ -10,6 +10,16 @@
 // Der Server sieht nur die neutrale Form; dadurch bleiben Chunk-Hashes zwischen
 // PCs vergleichbar.
 //
+// Umkehrbarkeit: Text, der nur so aussieht wie ein Platzhalter (etwa in einem Chat
+// ueber Clyde), darf beim Einsetzen nicht ersetzt werden. Deshalb wird beim
+// Neutralisieren jedes woertliche "@@CLYDE_" zu "@@CLYDE_ESC_" und beim Einsetzen
+// zurueck. Ausnahme: Platzhalter, die dieser PC nicht einsetzen kann (etwa ein
+// Projektlaufwerk auf einem Mac), bleiben in beiden Richtungen unveraendert, auch
+// maskiert ("@@CLYDE_ESC_DRIVE_RAW@@"). So bleibt die neutrale Form auf jedem PC
+// stabil, auch wenn er nicht alle Platzhalter kennt.
+// Ersetzt wird in einem Durchgang, am weitesten links beginnend und bei gleichem
+// Anfang der laengste Treffer; eingesetzter Text wird nie ein zweites Mal ersetzt.
+//
 // Die Ersetzung arbeitet auf Bytes: alle Muster sind ASCII, UTF-8-Mehrbytezeichen
 // koennen keine ASCII-Bytes enthalten, also ist das fuer jede Kodierung sicher.
 import path from 'node:path';
@@ -17,6 +27,13 @@ import path from 'node:path';
 const BS = String.fromCharCode(92);
 const KINDS = ['J2', 'J1', 'RAW', 'FWD', 'POSIX', 'KEY'];
 export const TEXT_EXTENSIONS = new Set(['.jsonl', '.json', '.md', '.txt']);
+
+// Version der Ersetzungsregeln; aendert sie sich, sind gecachte Hashes ungueltig
+export const REWRITE_VERSION = 3;
+const PREFIX = Buffer.from('@@CLYDE_');
+const ESC = Buffer.from('@@CLYDE_ESC_');
+const ESC_PART = Buffer.from('ESC_');
+const TOKENS = ['HOME', 'DRIVE'].flatMap((w) => ['J2', 'J1', 'RAW', 'FWD', 'POSIX', 'KEY'].map((k) => `@@CLYDE_${w}_${k}@@`));
 
 export function normalizeHome(h) {
   return String(h || '').replace(/[\\/]+$/, '');
@@ -29,6 +46,13 @@ export function normalizeDrive(d) {
 
 export function isTextFile(p) {
   return TEXT_EXTENSIONS.has(path.extname(p).toLowerCase());
+}
+
+// Wie wird eine Datei beim Einsetzen geprueft? jsonl: jede geaenderte Zeile muss
+// gueltiges JSON bleiben; json: die ganze Datei; sonst keine Pruefung
+export function textMode(p) {
+  const ext = path.extname(p).toLowerCase();
+  return ext === '.jsonl' ? 'jsonl' : ext === '.json' ? 'json' : 'text';
 }
 
 // Die sechs Schreibweisen eines Pfads (roh, mit Backslashes). Der Pfad darf mit
@@ -58,8 +82,7 @@ export function pathVariants(raw) {
 const mk = (kind, tag, value, { before = false, after = true, tagAfter = false } = {}) =>
   ({ kind, tag, value, valueBuf: Buffer.from(value), tagBuf: Buffer.from(tag), before, after, tagAfter });
 
-// Alle Schreibweisen des Home-Verzeichnisses, laengste zuerst, damit "C:\\Users"
-// nicht schon als "C:\Users" halb ersetzt wird. Nach dem Treffer darf kein
+// Alle Schreibweisen des Home-Verzeichnisses. Nach dem Treffer darf kein
 // Wortzeichen folgen (C:\Users\warro2 bleibt).
 export function homeForms(home) {
   const raw = normalizeHome(home);
@@ -85,7 +108,6 @@ export function driveForms(letter) {
 }
 
 // Zuordnungen einzelner Projekte: neutrale Form (wie im Snapshot) -> lokaler Pfad.
-// Laengste zuerst, damit Unterordner vor Oberordnern greifen.
 export function pathMapForms(pathMap) {
   const out = [];
   const entries = Object.entries(pathMap || {})
@@ -109,38 +131,121 @@ export function allForms(home, projectDrive, pathMap) {
 
 const isWordByte = (b) => (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b === 95;
 
-function replaceBuf(buf, from, to, before, after) {
-  let idx = buf.indexOf(from);
-  if (idx === -1) return buf;
-  const parts = [];
-  let last = 0;
-  while (idx !== -1) {
-    const end = idx + from.length;
-    const okBefore = !before || idx === 0 || !isWordByte(buf[idx - 1]);
-    const okAfter = !after || end >= buf.length || !isWordByte(buf[end]);
-    if (okBefore && okAfter) {
-      parts.push(buf.subarray(last, idx), to);
-      last = end;
-    }
-    idx = buf.indexOf(from, end);
+// Muster je Regelsatz einmal vorbereiten
+const compiled = new WeakMap();
+function compile(forms) {
+  let c = compiled.get(forms);
+  if (c) return c;
+  const canon = [{ from: PREFIX, to: ESC }];
+  const local = [{ from: ESC, to: PREFIX }];
+  const known = new Set();
+  for (const f of forms) {
+    canon.push({ from: f.valueBuf, to: f.tagBuf, before: f.before, after: f.after });
+    local.push({ from: f.tagBuf, to: f.valueBuf, after: f.tagAfter });
+    known.add(f.tag);
   }
-  parts.push(buf.subarray(last));
+  // Folgt auf "@@CLYDE_" (und beliebig viele "ESC_") ein Platzhalter, den dieser PC
+  // nicht einsetzen kann, bleibt die Stelle in beiden Richtungen, wie sie ist
+  const unknown = TOKENS.filter((t) => !known.has(t)).map((t) => Buffer.from(t.slice(PREFIX.length)));
+  if (unknown.length) {
+    const guard = (buf, idx) => {
+      let p = idx + PREFIX.length;
+      while (buf.compare(ESC_PART, 0, 4, p, p + 4) === 0) p += 4;
+      return unknown.some((u) => buf.compare(u, 0, u.length, p, p + u.length) === 0);
+    };
+    canon[0].guard = guard;
+    local[0].guard = guard;
+  }
+  c = { canon, local };
+  compiled.set(forms, c);
+  return c;
+}
+const NO_FORMS = [];
+
+// Ein Durchgang: alle Treffer sammeln, von links nach rechts den laengsten nehmen
+function rewrite(buf, pats) {
+  const hits = [];
+  for (let i = 0; i < pats.length; i++) {
+    const pt = pats[i];
+    if (!pt.from.length) continue;
+    let idx = buf.indexOf(pt.from);
+    while (idx !== -1) {
+      const end = idx + pt.from.length;
+      const okBefore = !pt.before || idx === 0 || !isWordByte(buf[idx - 1]);
+      const okAfter = !pt.after || end >= buf.length || !isWordByte(buf[end]);
+      if (okBefore && okAfter && !(pt.guard && pt.guard(buf, idx))) hits.push([idx, end, i]);
+      idx = buf.indexOf(pt.from, idx + 1);
+    }
+  }
+  if (!hits.length) return buf;
+  hits.sort((a, b) => a[0] - b[0] || (b[1] - b[0]) - (a[1] - a[0]) || a[2] - b[2]);
+  const parts = [];
+  let pos = 0;
+  for (const [s, e, i] of hits) {
+    if (s < pos) continue;
+    parts.push(buf.subarray(pos, s), pats[i].to);
+    pos = e;
+  }
+  parts.push(buf.subarray(pos));
   return Buffer.concat(parts);
 }
 
+// Inhalte: lokale Werte -> Platzhalter (mit Maskierung)
 export function canonicalizeBuf(buf, forms) {
-  for (const f of forms) buf = replaceBuf(buf, f.valueBuf, f.tagBuf, f.before, f.after);
-  return buf;
+  return rewrite(buf, compile(forms).canon);
 }
+// Platzhalter -> lokale Werte, Maskierung aufheben
 export function localizeBuf(buf, forms) {
-  for (const f of forms) buf = replaceBuf(buf, f.tagBuf, f.valueBuf, false, f.tagAfter);
-  return buf;
+  return rewrite(buf, compile(forms).local);
 }
+
+const validJson = (b) => { try { JSON.parse(b.toString('utf8')); return true; } catch { return false; } };
+
+// Einsetzen mit Pruefung: ergibt eine geaenderte JSONL-Zeile kein gueltiges JSON
+// mehr (z. B. ein woertlicher Platzhalter aus einem Stand von Clyde < 0.4.2), bleibt
+// sie neutral stehen (nur die Maskierung wird aufgehoben), statt das Transkript
+// zu beschaedigen.
+export function localizeJsonlBuf(buf, forms) {
+  const pats = compile(forms).local;
+  if (rewrite(buf, pats) === buf) return buf;
+  const plainPats = compile(NO_FORMS).local;
+  const parts = [];
+  let start = 0;
+  while (start < buf.length) {
+    const nl = buf.indexOf(10, start);
+    const stop = nl === -1 ? buf.length : nl;
+    const line = buf.subarray(start, stop);
+    let out = rewrite(line, pats);
+    if (out !== line && !validJson(out)) {
+      const plain = rewrite(line, plainPats);
+      if (validJson(plain)) out = plain;
+    }
+    parts.push(out);
+    if (nl !== -1) parts.push(buf.subarray(nl, nl + 1));
+    start = stop + 1;
+  }
+  return Buffer.concat(parts);
+}
+// Dasselbe fuer eine ganze JSON-Datei
+export function localizeJsonBuf(buf, forms) {
+  const out = localizeBuf(buf, forms);
+  if (out === buf || validJson(out)) return out;
+  const plain = localizeBuf(buf, NO_FORMS);
+  return validJson(plain) ? plain : out;
+}
+export function localizeFn(mode) {
+  return mode === 'jsonl' ? localizeJsonlBuf : mode === 'json' ? localizeJsonBuf : localizeBuf;
+}
+
 export function canonicalize(text, forms) {
-  return forms.length ? canonicalizeBuf(Buffer.from(text), forms).toString() : text;
+  const buf = Buffer.from(text);
+  const out = rewrite(buf, compile(forms).canon);
+  return out === buf ? text : out.toString();
 }
 export function localize(text, forms) {
-  return forms.length ? localizeBuf(Buffer.from(text), forms).toString() : text;
+  const buf = Buffer.from(text);
+  const out = rewrite(buf, compile(forms).local);
+  return out === buf ? text : out.toString();
 }
 
 // Wandelt einen Byte-Strom stueckweise um. Die Muster enthalten keinen

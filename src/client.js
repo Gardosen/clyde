@@ -67,14 +67,19 @@ export class Client {
   // Holt Chunks in einem Stream; onBlob({hash, data}) wird je Chunk aufgerufen
   async fetchBlobs(hashes, onBlob) {
     const res = await this.request('POST', '/blobs/fetch', {
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'accept-encoding': 'gzip' },
       body: JSON.stringify({ hashes }),
     });
     if (res.status >= 300) throw new Error(`Download fehlgeschlagen: HTTP ${res.status} ${(await readAll(res.stream)).slice(0, 300)}`);
-    const gunzip = zlib.createGunzip();
-    pipeline(res.stream, gunzip).catch((e) => gunzip.destroy(e));
+    // Ein Proxy davor (z. B. Traefik) kann die Antwort bereits entpackt haben
+    let src = res.stream;
+    if (res.headers['content-encoding'] === 'gzip') {
+      const gunzip = zlib.createGunzip();
+      pipeline(res.stream, gunzip).catch((e) => gunzip.destroy(e));
+      src = gunzip;
+    }
     let n = 0;
-    for await (const b of decodeBlobs(gunzip)) {
+    for await (const b of decodeBlobs(src)) {
       if (sha256(b.data) !== b.hash) throw new Error(`Server lieferte beschaedigten Chunk ${b.hash.slice(0, 12)}`);
       await onBlob(b);
       n++;

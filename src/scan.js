@@ -3,7 +3,7 @@ import path from 'node:path';
 import { hashFile, chunkSizeAt } from './chunker.js';
 import { sha256 } from './framing.js';
 import { cachePath, clydeHome } from './paths.js';
-import { canonicalize, isTextFile } from './rewrite.js';
+import { canonicalize, isTextFile, textMode, REWRITE_VERSION } from './rewrite.js';
 import { pathBelongsTo } from './session.js';
 
 // Absoluter Pfad einer Datei (lokaler Relativpfad) innerhalb eines Roots
@@ -20,7 +20,7 @@ export function formsFor(cfg, root, lp) {
 // Signatur der Platzhalter-Regeln; aendern sie sich (neue Zuordnung, anderes
 // Laufwerk), sind gecachte Hashes von Textdateien ungueltig
 export function formsKey(cfg) {
-  return sha256(JSON.stringify(cfg.forms.map((f) => [f.tag, f.value]))).slice(0, 16);
+  return sha256(JSON.stringify([REWRITE_VERSION, cfg.forms.map((f) => [f.tag, f.value])])).slice(0, 16);
 }
 
 const UNC_PREFIX = String.fromCharCode(92, 92, 63, 92); // Windows-Praefix vor Junction-Zielen
@@ -114,7 +114,7 @@ export async function buildLocalManifest(cfg, log) {
         csize = c.cs;
         stale = !!c.st;
       } else {
-        ({ chunks, size: csize, stale } = await hashFile(f.abs, forms));
+        ({ chunks, size: csize, stale } = await hashFile(f.abs, forms, textMode(f.p)));
         stats.hashedFiles++;
         stats.hashedBytes += f.s;
       }
