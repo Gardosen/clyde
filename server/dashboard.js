@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allForms, localize } from '../src/rewrite.js';
+import { groupLookup } from '../src/appgroups.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -98,6 +99,8 @@ export async function chatsForSnapshot(store, man) {
 
   const byId = new Map();
   for (const t of transcripts.values()) byId.set(t.id, t);
+  // Gruppen der Chatliste (vom Quell-PC mitgeschickt, nur Namen und Zuordnungen)
+  const groups = groupLookup(man.appGroups);
   const chats = [];
   const seen = new Set();
   const sessRoot = man.roots['desktop-sessions'] || { files: [], missing: true };
@@ -118,6 +121,7 @@ export async function chatsForSnapshot(store, man) {
       model: j.model || null, effort: j.effort || null, permissionMode: j.permissionMode || null,
       isArchived: !!j.isArchived,
       createdAt: toMs(j.createdAt), lastActivityAt: toMs(j.lastActivityAt), lastFocusedAt: toMs(j.lastFocusedAt),
+      appGroup: (typeof j.sessionId === 'string' && groups.byChat.get(j.sessionId)) || null,
       transcript: linked || null,
     });
   }
@@ -145,6 +149,7 @@ export async function chatsForSnapshot(store, man) {
       home: man.home, projectDrive: man.projectDrive || null, claudeHome: man.claudeHome || null,
       rootPaths: man.rootPaths || {}, stats: man.stats,
       chatListMissing: !!sessRoot.missing || !sessRoot.files.length,
+      hasAppGroups: groups.ranks.size > 0,
       projects: (man.projects || []).map((p) => ({ canonical: p, shown: shown(p) })),
       roots: Object.fromEntries(Object.entries(man.roots).map(([n, r]) => [n, { files: r.files.length, bytes: r.files.reduce((a, f) => a + f.s, 0), links: (r.links || []).length, missing: !!r.missing }])),
     },

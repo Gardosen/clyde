@@ -232,6 +232,19 @@ test('Dashboard-API liefert Chats mit Titel, Projektpfad und Transkript', async 
   write(path.join(C, 'projects', 'C--Users-alice-Nextcloud-Aegis', 'weg.jsonl'), '{"x":1}\n');
   write(path.join(C, 'projects', 'C--Users-alice-Nextcloud-Aegis', 'weg.desktop-released.json'), '{"v":1,"reason":"delete"}');
   write(path.join(C, 'sessions', 'scheduled-tasks.json'), '{"scheduledTasks":[]}');
+  // Einstellungsdatei der App: Gruppen plus ein Zugangsdatum, das nie hochgeladen werden darf
+  write(path.join(C, 'claude_desktop_config.json'), JSON.stringify({
+    mcpServers: { geheim: { command: 'x', env: { API_TOKEN: 'GEHEIM-12345' } } },
+    preferences: { epitaxyPrefs: {
+      'dframe-group-scopes': { 'org/acct': {
+        groups: [{ id: 'cg-1', name: 'Archivar Project', secret: 'GEHEIM-12345' }],
+        assignments: { 'code:local_9': 'cg-1' },
+        order: { 'cg-1': ['code:local_9'] },
+      } },
+      'starred-local-code-sessions': [],
+      'oauth:tokenCache': 'GEHEIM-12345',
+    } },
+  }));
   await push(cAlice(), {}, log);
   const c = new Client(SERVER, TOKEN);
   const d = await c.json('GET', '/snapshots/latest/chats');
@@ -246,6 +259,11 @@ test('Dashboard-API liefert Chats mit Titel, Projektpfad und Transkript', async 
   const fromTranscript = d.chats.find((x) => x.transcript && x.transcript.project === '@@CLYDE_DRIVE_KEY@@Aegis-episode1');
   assert.equal(fromTranscript.cwdShown, 'D:\\Aegis\\episode1', 'Projektordner aus dem Transkript gelesen');
   assert.equal(d.snapshot.chatListMissing, false);
+  assert.deepEqual(chat.appGroup, { id: 'cg-1', name: 'Archivar Project', rank: 0 }, 'Gruppe der App kommt im Dashboard an');
+  assert.equal(d.snapshot.hasAppGroups, true);
+  const rawManifest = JSON.stringify(await c.getSnapshot('latest'));
+  assert.ok(rawManifest.includes('Archivar Project'));
+  assert.ok(!rawManifest.includes('GEHEIM'), 'aus der Einstellungsdatei geht nur Gruppen-Name und Zuordnung mit');
   assert.equal((await (await fetch(`${SERVER}/health`)).json()).version, JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
   assert.equal(chat.cwdShown, 'C:\\Users\\alice\\Nextcloud\\Aegis');
   assert.equal(chat.cwd, '@@CLYDE_HOME_RAW@@\\Nextcloud\\Aegis');

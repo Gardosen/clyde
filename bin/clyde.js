@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { loadConfig } from '../src/config.js';
 import { log } from '../src/log.js';
 import { push, pull } from '../src/commands.js';
-import { init, map, list, status, doctor, gc, del } from '../src/commands-misc.js';
+import { init, map, list, status, doctor, gc, del, relocate } from '../src/commands-misc.js';
 
 const HELP = `clyde - synchronisiert den Zustand der Claude-Desktop-App-Chats zwischen PCs
 
@@ -21,6 +21,9 @@ Befehle
   doctor                            Pfade, Platzhalter, Prozesse und Server pruefen
   delete ID                         Snapshot auf dem Server loeschen
   gc                                nicht mehr referenzierte Chunks auf dem Server loeschen
+  relocate --chat TITEL --to ORDNER Chat einem anderen Projektordner zuordnen (App geschlossen)
+  relocate --plan PLAN.json         mehrere Chats laut Plan umziehen; --dry-run zeigt nur an
+  relocate --undo SICHERUNG         Umzug rueckgaengig machen
 
 Optionen
   --clyde-chat   den aufrufenden Chat der App dauerhaft als Clyde-Chat registrieren;
@@ -51,6 +54,10 @@ try {
       home: { type: 'string' },
       'project-drive': { type: 'string' },
       remove: { type: 'string' },
+      plan: { type: 'string' },
+      chat: { type: 'string' },
+      to: { type: 'string' },
+      undo: { type: 'string' },
       add: { type: 'boolean', default: false },
       list: { type: 'boolean', default: false },
       'clyde-chat': { type: 'boolean', default: false },
@@ -75,15 +82,16 @@ log.setVerbose(values.verbose);
 const opts = {
   server: values.server, token: values.token, home: values.home, projectDrive: values['project-drive'],
   remove: values.remove, add: values.add, list: values.list, clydeChat: values['clyde-chat'],
+  plan: values.plan, chat: values.chat, to: values.to, undo: values.undo,
   force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1),
 };
-const commands = { init, push, pull, map, status, list, doctor, gc, delete: del };
+const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate };
 
 try {
   const fn = commands[cmd];
   if (!fn) throw new Error(`Unbekannter Befehl "${cmd}". Hilfe: clyde --help`);
-  const cfg = loadConfig({ required: !['init', 'doctor'].includes(cmd) });
+  const cfg = loadConfig({ required: !['init', 'doctor', 'relocate'].includes(cmd) });
   await fn(cfg, opts, log);
 } catch (e) {
   log.error(e.message);

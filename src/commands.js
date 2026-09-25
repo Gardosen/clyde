@@ -13,6 +13,7 @@ import { lastSnapshotPath, claudeHome, clydeHome } from './paths.js';
 import { saveConfig, configFromRaw } from './config.js';
 import { canonicalize, localize, allForms, normalizeHome } from './rewrite.js';
 import { fmtBytes } from './log.js';
+import { readAppGroups } from './appgroups.js';
 
 export const MANIFEST_VERSION = 2;
 
@@ -147,6 +148,7 @@ export async function push(cfg, opts, log) {
     host: os.hostname(), user: os.userInfo().username, home: cfg.home, projectDrive: cfg.projectDrive, platform: process.platform, claudeHome: claudeHome(),
     rootPaths: Object.fromEntries(Object.entries(cfg.roots).map(([n, r]) => [n, r.path])),
     projects: await collectProjects(cfg),
+    appGroups: readAppGroups(cfg),
     roots: manifestRoots(local.roots),
     stats: { files: local.stats.files, bytes: local.stats.bytes, chunks: local.stats.chunks },
   };

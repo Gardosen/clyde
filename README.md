@@ -226,6 +226,44 @@ laufende Chats und ob Server und Token passen.
 Vor jedem Pull legt Clyde eine Kopie des bisherigen Stands unter
 `%USERPROFILE%\.clyde\backups\<Zeitstempel>` an; die letzten drei bleiben.
 
+## Chats einem anderen Projektordner zuordnen
+
+Claude merkt sich zu jedem Chat den Ordner, in dem er gestartet wurde. Wer viele
+Projekte aus demselben Ordner begonnen hat, kann sie nachträglich dem richtigen
+Ordner zuordnen. Die Projektdateien bleiben, wo sie sind; umgestellt werden nur
+der Eintrag in der Chatliste (Projektordner und Ordner-Freigabe) und der
+Ablageort des Transkripts unter `.claude\projects`. Hatte der alte Ordner ein
+Memory, bekommt der neue eine Verknüpfung darauf, sodass das Wissen bleibt.
+
+Weil die App diese Einträge im Speicher hält, geht das nur bei geschlossener App
+aus einem Terminal. Der Trockenlauf geht jederzeit.
+
+```bash
+clyde relocate --chat "Lunia" --to "D:\Lunia" --dry-run
+```
+
+Für mehrere Chats auf einmal ein Plan als JSON:
+
+```json
+{ "chats": [ { "chat": "3. Lunia Archivar Projekt", "to": "D:\\Lunia" },
+             { "chat": "local_f4586c16-...", "to": "D:\\Lineage 2" } ] }
+```
+
+```bash
+clyde relocate --plan plan.json
+```
+
+Ein Chat wird über einen Teil seines Titels oder seine ID gefunden. Vor dem
+Umzug sichert Clyde die Einträge; `clyde relocate --undo <Sicherungsordner>`
+macht alles rückgängig. Den Sicherungsordner nennt die Ausgabe.
+
+## Dashboard: Gruppen und Projektordner
+
+Die Chatliste im Dashboard steht so geordnet wie in der App: Chats mit einer
+Gruppe der Seitenleiste in dieser Gruppe, alle anderen nach Projektordner. Titel,
+Projektordner und Modell von Transkripten ohne Eintrag in der App liest das
+Dashboard aus dem Anfang des Transkripts.
+
 ## Wie es funktioniert
 
 - **Scan:** Jede Datei wird in die neutrale Form gebracht und in 4-MiB-Stücke
@@ -260,8 +298,10 @@ Vor jedem Pull legt Clyde eine Kopie des bisherigen Stands unter
 - **Chatliste bei laufender App:** Ob die App neue oder geänderte Einträge ohne
   Neustart übernimmt, ist nicht verifiziert. Nach einem Pull im Zweifel die App
   einmal neu starten.
-- **Gruppen und Anheftungen** der Chatliste speichert die App anderswo; sie werden
-  nicht übertragen.
+- **Gruppen der Chatliste** (z. B. „Archivar Project") stehen in der
+  Einstellungsdatei der App. Clyde liest beim Push nur Gruppennamen und
+  Zuordnungen daraus und zeigt sie im Dashboard. Auf dem Ziel-PC werden sie nicht
+  in die App geschrieben, weil die Datei auch alle anderen App-Einstellungen enthält.
 - Snapshots im alten Format v1 lehnt der Client ab; auf dem Quell-PC einmal neu
   pushen.
 

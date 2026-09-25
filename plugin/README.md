@@ -22,7 +22,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 2. **Node.js 20 or newer** on each computer.
 3. **The Clyde command-line tool** on each computer. `/clyde:setup` checks for it
    and offers to install the pinned release from GitHub:
-   `npm install -g github:Gardosen/clyde#v0.3.1`
+   `npm install -g github:Gardosen/clyde#v0.3.3`
 4. **Claude Code** – the desktop app's Code tab or the terminal. The commands run
    local programs and do not work in claude.ai chat or Cowork.
 
@@ -46,6 +46,9 @@ Clyde is transparent about its data flow:
 - **Reads** Claude's local data: `~/.claude/projects` (chat transcripts, tool
   results, memory), `~/.claude/file-history`, `~/.claude/todos`,
   `~/.claude/plans`, `~/.claude/history.jsonl` and the desktop app's chat list.
+  From the app's settings file `claude_desktop_config.json` it reads only the
+  names of your chat groups and which chat belongs to which group; nothing else
+  from that file is read out or sent.
 - **Sends** that data, split into compressed chunks, only to the backend URL you
   enter in `/clyde:setup`, authenticated with your token. Nothing goes anywhere
   else. Chat transcripts contain everything written in them, including file

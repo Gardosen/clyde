@@ -11,6 +11,7 @@ import { saveConfig, loadConfig, normalizeServerUrl } from './config.js';
 import { configPath } from './paths.js';
 import { normalizeHome, normalizeDrive } from './rewrite.js';
 import { loadLast, registerClydeChat } from './commands.js';
+import { planRelocation, applyRelocation, undoRelocation } from './relocate.js';
 import { fmtBytes } from './log.js';
 
 // Zustand der laufenden Chats: im Clyde-Chat zaehlt nur, ob andere gerade arbeiten
@@ -181,6 +182,46 @@ export async function doctor(cfg, opts, log) {
   } else {
     log.info('Kein Server eingerichtet: clyde init --server URL --token TOKEN');
   }
+}
+
+// Chats einem anderen Projektordner zuordnen. Aendert die Chatliste der App und
+// geht deshalb nur bei geschlossener App aus einem Terminal (Trockenlauf immer).
+export async function relocate(cfg, opts, log) {
+  if (opts.undo) {
+    requireAppClosed('Rueckgaengig machen', opts.force);
+    const n = undoRelocation(opts.undo, log);
+    log.info(`${n} Chats zurueckgestellt. App starten.`);
+    return;
+  }
+  let items;
+  if (opts.plan) {
+    const raw = JSON.parse(fs.readFileSync(opts.plan, 'utf8'));
+    items = (Array.isArray(raw) ? raw : raw.chats || []).map((x) => ({ chat: x.chat, to: x.to }));
+  } else if (opts.chat && opts.to) {
+    items = [{ chat: opts.chat, to: opts.to }];
+  } else {
+    throw new Error('Aufruf: clyde relocate --chat "TITEL oder ID" --to ZIELORDNER   oder   clyde relocate --plan PLAN.json   [--dry-run]   |   clyde relocate --undo SICHERUNGSORDNER');
+  }
+  const steps = planRelocation(cfg, items);
+  log.info(`${steps.length} Chats:`);
+  for (const s of steps) {
+    if (s.unchanged) { log.info(`  = ${s.title}: liegt schon in ${s.to}`); continue; }
+    log.info(`  ${s.title}\n      Projektordner ${s.oldCwd} -> ${s.to}`);
+    if (s.moves.length) log.info(`      Transkript nach .claude/projects/${path.basename(s.newDir)} (${s.moves.length} Eintraege)`);
+    if (s.link) log.info(`      Memory-Verknuepfung ${path.basename(s.newDir)}/memory -> ${s.link.target}`);
+  }
+  if (opts.dryRun) { log.info('Trockenlauf, nichts geaendert.'); return { steps }; }
+  requireAppClosed('Umzug', opts.force);
+  const bdir = applyRelocation(steps, log);
+  log.info(`Fertig. Sicherung und Rueckgaengig-Daten: ${bdir}\nRueckgaengig: clyde relocate --undo "${bdir}"\nJetzt die App starten.`);
+  return { steps, backupDir: bdir };
+}
+
+function requireAppClosed(action, force) {
+  if (process.env.CLYDE_SKIP_GUARD === '1') return;
+  if (ownSession()) throw new Error(`${action} aendert die Chatliste der App und geht nicht aus einem Chat heraus. App schliessen und den Befehl in einem Terminal ausfuehren.`);
+  const r = claudeRunning();
+  if (r.length && !force) throw new Error(`${action} abgebrochen, Claude laeuft noch:\n${r.map((x) => `  - ${x}`).join('\n')}\nErst die Claude-App schliessen.`);
 }
 
 export async function gc(cfg, opts, log) {
