@@ -1,8 +1,19 @@
 # Clyde
 
-Clyde bringt den **exakten Zustand deiner Claude-App-Chats** von einem PC auf den
-anderen. Auf PC A wird der Stand eingefroren und hochgeladen, auf PC B genau so
-wiederhergestellt: Transkripte, Chatliste der App, Datei-Historie, Todos, Pläne.
+Clyde hält die **Chats der Claude-App auf allen deinen PCs gleich**. Jedes
+Clyde-Konto hat eine eigene Sammlung, in die alle PCs des Kontos ihre Chats
+einbringen: Transkripte, Chatliste der App, Datei-Historie, Todos, Pläne. Jeder PC
+holt sich daraus, was ihm fehlt. Konten sehen sich nie gegenseitig; wer mehrere
+Personen bedient, legt jeder ein eigenes Konto an.
+
+- **Push** bringt neue, weitergeführte und gelöschte Chats dieses PCs in die
+  Sammlung. Chats anderer PCs bleiben erhalten.
+- **Pull** holt neue und geänderte Chats der anderen PCs. Eigene Chats bleiben;
+  gelöscht wird nur, was auf einem anderen PC gelöscht wurde.
+- **Ersteinrichtung:** Hat ein PC schon Chats, kommen sie beim ersten Push in die
+  Sammlung; beim ersten Pull bleiben sie erhalten.
+- **Konflikte:** Wurde derselbe Chat auf zwei PCs weitergeführt, bleiben die
+  Zeilen beider Seiten erhalten. Bei anderen Dateien gewinnt die neuere Fassung.
 
 Projekt: **https://github.com/Gardosen/clyde**
 
@@ -42,8 +53,9 @@ Reines Node.js ohne Abhängigkeiten, Node 20 oder neuer.
 5. **Einen eigenen Chat nur für Clyde anlegen** und darin `/clyde:setup` aufrufen.
    Clyde fragt nach Server-Adresse und Token und registriert diesen Chat als
    Clyde-Chat.
-6. **Synchronisieren:** auf PC A im Clyde-Chat `/clyde:push`, auf PC B im
-   Clyde-Chat `/clyde:pull`.
+6. **Synchronisieren:** Bevor du den PC wechselst, auf dem alten im Clyde-Chat
+   `/clyde:push`, auf dem neuen `/clyde:pull`. Fehlt dort ein Projektordner, fragt
+   Clyde per Auswahl: Pfad angeben, Ordner anlegen oder vorerst weglassen.
 
 ## Das Plugin: Clyde in der Claude-App
 
@@ -53,8 +65,8 @@ Das Plugin ist das Client-Gegenstück zum Backend. Es läuft in einem eigenen
 | Befehl | Wirkung |
 |---|---|
 | `/clyde:setup [url] [token] [laufwerk]` | CLI prüfen, Server-Adresse und Token eintragen, Chat als Clyde-Chat registrieren |
-| `/clyde:push` | Stand aller anderen Chats dieses PCs hochladen |
-| `/clyde:pull [snapshot-id]` | Neuesten oder bestimmten Stand herstellen; fragt nach fehlenden Projektordnern und vor dem Entfernen von Chats |
+| `/clyde:push` | Änderungen dieses PCs in die Sammlung des Kontos einbringen |
+| `/clyde:pull` | Neue und geänderte Chats der anderen PCs holen; fragt per Auswahl nach fehlenden Projektordnern |
 | `/clyde:status` | Neuester Snapshot, lokale Änderungen, arbeitende Chats |
 
 So verhält es sich:
@@ -222,9 +234,12 @@ laufende Chats und ob Server und Token passen.
 | Befehl | Zweck |
 |---|---|
 | `clyde init --server URL --token TOKEN` | Ersteinrichtung |
-| `clyde push` | Stand hochladen |
-| `clyde pull [ID]` | Neuesten oder bestimmten Stand herstellen, `--dry-run` zeigt nur den Plan |
-| `clyde status` | Änderungen seit dem letzten Sync, arbeitende Chats |
+| `clyde push` | Änderungen dieses PCs in die Sammlung einbringen |
+| `clyde pull` | Änderungen anderer PCs holen, `--dry-run` zeigt nur den Plan |
+| `clyde pull --create-missing DIR` | dabei fehlende Projektordner unter DIR anlegen (etwa auf einem Mac) |
+| `clyde pull ID --exact` | einen gespeicherten Stand exakt herstellen, lokale Abweichungen fallen weg |
+| `clyde merge ID ID [...]` | gespeicherte Stände zu einem neuen gemeinsamen Stand fusionieren |
+| `clyde status` | was hochzuladen und was zu holen ist, arbeitende Chats |
 | `clyde list` | Snapshots auf dem Server |
 | `clyde map --list` / `--add` / `--remove N` | Projekt-Zuordnungen |
 | `clyde doctor` | Einrichtung prüfen |
@@ -276,14 +291,22 @@ Dashboard aus dem Anfang des Transkripts.
 - **Scan:** Jede Datei wird in die neutrale Form gebracht und in 4-MiB-Stücke
   zerlegt, jedes Stück per SHA-256 benannt. Ein Cache vermeidet das Neu-Hashen
   unveränderter Dateien.
+- **Abgleich:** Jede Datei wird dreifach verglichen: lokaler Stand, gemeinsamer
+  Stand des Kontos (neuester Snapshot) und der Stand, den dieser PC zuletzt
+  abgeglichen hat (die Basis, `~/.clyde/base-*.json`). Hat sich nur eine Seite
+  geändert, gilt diese, auch fürs Löschen. Haben sich beide geändert, werden
+  `.jsonl`-Transkripte und `MEMORY.md` zeilenweise zusammengeführt, sonst gewinnt
+  die neuere Fassung. Ohne Basis (erster Abgleich) werden die Stände vereinigt.
 - **Push:** Der Server nennt die Stücke, die ihm fehlen; nur diese gehen
   komprimiert hoch. Ein 100-MB-Chat, an den seit dem letzten Push nur angehängt
-  wurde, kostet ein einziges Stück. Danach wird das Manifest als Snapshot
-  gespeichert, aber nur, wenn alle Stücke vorliegen.
-- **Pull:** Plan = Snapshot minus lokaler Stand. Stücke, die lokal schon
-  vorliegen, werden wiederverwendet, der Rest geladen. Dateien werden erst
-  vollständig geschrieben und dann atomar umbenannt; überzählige Dateien und leere
-  Ordner werden entfernt.
+  wurde, kostet ein einziges Stück. Danach wird der zusammengeführte Stand als
+  neuer Snapshot gespeichert. Hat inzwischen ein anderer PC hochgeladen, lehnt der
+  Server ab, und der Client führt neu zusammen.
+- **Pull:** Stücke, die lokal schon vorliegen, werden wiederverwendet, der Rest
+  geladen. Dateien werden erst vollständig geschrieben und dann atomar umbenannt.
+- **Zuordnungen:** Wird eine Projekt-Zuordnung gesetzt oder entfernt, stellt
+  Clyde die betroffenen Chats sofort um, damit sie beim nächsten Abgleich nicht
+  als gelöscht und neu erscheinen.
 
 ## Sicherheit
 
@@ -300,8 +323,9 @@ Dashboard aus dem Anfang des Transkripts.
 
 ## Grenzen
 
-- **Kein Zusammenführen:** Clyde stellt genau einen Snapshot her. Wer auf zwei PCs
-  parallel arbeitet und dann zieht, verliert den lokalen Stand; das Backup bleibt.
+- **Andere Betriebssysteme:** Pfade im Inhalt alter Tool-Ausgaben behalten die
+  Schreibweise des Quell-PCs (etwa `\` statt `/` auf einem Mac). Projektordner und
+  Chatliste werden über die Zuordnungen richtig umgestellt.
 - **Chatliste bei laufender App:** Ob die App neue oder geänderte Einträge ohne
   Neustart übernimmt, ist nicht verifiziert. Nach einem Pull im Zweifel die App
   einmal neu starten.

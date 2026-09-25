@@ -9,9 +9,11 @@ import { liveSessions, ownSession, describeSession } from './session.js';
 import readline from 'node:readline/promises';
 import { saveConfig, loadConfig, normalizeServerUrl } from './config.js';
 import { configPath } from './paths.js';
-import { normalizeHome, normalizeDrive } from './rewrite.js';
+import { normalizeHome, normalizeDrive, localize } from './rewrite.js';
 import { loadLast, registerClydeChat } from './commands.js';
 import { planRelocation, applyRelocation, undoRelocation } from './relocate.js';
+import { fetchLatest, prepare, describe, relocalize } from './sync.js';
+import { configFromRaw } from './config.js';
 import { fmtBytes } from './log.js';
 
 // Zustand der laufenden Chats: im Clyde-Chat zaehlt nur, ob andere gerade arbeiten
@@ -103,10 +105,16 @@ export async function map(cfg, opts, log) {
   const entries = Object.entries(cfg.pathMap);
   if (opts.add) {
     const [canonical, localRaw] = opts.args || [];
-    if (!canonical || !localRaw) throw new Error('Aufruf: clyde map --add "NEUTRALER-PFAD" "PFAD-AUF-DIESEM-PC"   (der neutrale Pfad steht in der Meldung von clyde pull)');
+    if (!canonical || !localRaw) throw new Error('Aufruf: clyde map --add "NEUTRALER-PFAD" "PFAD-AUF-DIESEM-PC" [--create]   (der neutrale Pfad steht in der Meldung von clyde pull)');
     const localPath = normalizeHome(path.resolve(localRaw.replace(/^["']|["']$/g, '')));
-    if (!fs.existsSync(localPath)) throw new Error(`${localPath} existiert nicht.`);
+    if (!fs.existsSync(localPath)) {
+      if (!opts.create) throw new Error(`${localPath} existiert nicht (mit --create wird er angelegt).`);
+      fs.mkdirSync(localPath, { recursive: true });
+      log.info(`Ordner angelegt: ${localPath}`);
+    }
     const raw = { ...cfg.raw, pathMap: { ...(cfg.raw.pathMap || {}), [canonical]: localPath } };
+    // Chats, die schon ohne Zuordnung hier liegen, sofort an den neuen Ort bringen
+    await relocalize(cfg, configFromRaw(raw), [canonical, localize(canonical, cfg.forms), cfg.pathMap[canonical]], opts, log);
     saveConfig(raw);
     log.info(`Zuordnung gespeichert: ${canonical} -> ${localPath}`);
     return;
@@ -116,6 +124,8 @@ export async function map(cfg, opts, log) {
     if (!(i >= 0 && i < entries.length)) throw new Error(`Aufruf: clyde map --remove NUMMER   (1..${entries.length}, siehe clyde map --list)`);
     const raw = { ...cfg.raw, pathMap: { ...cfg.raw.pathMap } };
     delete raw.pathMap[entries[i][0]];
+    // Dateien, die unter der alten Zuordnung liegen, sofort zurueckstellen
+    await relocalize(cfg, configFromRaw(raw), [entries[i][1]], opts, log);
     saveConfig(raw);
     log.info(`Zuordnung ${i + 1} entfernt: ${entries[i][0]} -> ${entries[i][1]}`);
     return;
@@ -142,22 +152,15 @@ export async function status(cfg, opts, log) {
   log.info(`Server ${cfg.server}: ${snapshots.length} Snapshots${latest ? `, neuester ${latest.id} von ${latest.host}` : ''}`);
   log.info(`Lokal zuletzt: ${last ? `${last.direction} ${last.id}` : 'noch nie synchronisiert'}`);
   for (const l of sessionLines()) log.info(l);
-  const ref = last ? await client.getSnapshot(last.id).catch(() => null) : null;
-  const local = await buildLocalManifest(cfg, log);
-  if (ref && ref.version === 2) {
-    // Plan lokal -> Referenz: "delete" = lokal neu, "isNew" = lokal geloescht
-    const plan = planRestore(local.roots, ref.roots, cfg.roots, cfg.forms, log, cfg.exclude);
-    const changed = plan.write.filter((f) => !f.isNew).length;
-    const gone = plan.write.length - changed;
-    log.info(`Lokale Aenderungen seit ${ref.id}: ${plan.delete.length} neu, ${changed} geaendert, ${gone} geloescht`);
-    if (opts.verbose) {
-      for (const d of plan.delete) log.info(`  + ${d.root}/${d.lp}`);
-      for (const f of plan.write) log.info(`  ${f.isNew ? '-' : '~'} ${f.root}/${f.lp}`);
-    }
-  } else {
-    log.info(`Lokal: ${local.stats.files} Dateien, ${fmtBytes(local.stats.bytes)}`);
+  const snap = latest ? await fetchLatest(client).catch(() => null) : null;
+  const { decisions, local } = await prepare(cfg, client, snap, log);
+  const s = describe(decisions);
+  log.info(`Lokal: ${local.stats.files} Dateien, ${fmtBytes(local.stats.bytes)}`);
+  log.info(`Zum Hochladen (clyde push): ${s.push} neu oder geaendert, ${s.pushDelete} geloescht${s.union ? `, ${s.union} beidseitig geaendert (werden zusammengefuehrt)` : ''}`);
+  log.info(`Zum Holen (clyde pull): ${s.pull} neu oder geaendert, ${s.pullDelete} auf anderen PCs geloescht`);
+  if (opts.verbose) {
+    for (const d of decisions) if (d.kind !== 'same') log.info(`  ${d.kind.padEnd(20)} ${d.root}/${d.l?.lp || d.p}`);
   }
-  if (latest && (!last || latest.id !== last.id)) log.info(`Hinweis: neuerer Snapshot auf dem Server -> "clyde pull" holt ihn.`);
 }
 
 export async function doctor(cfg, opts, log) {

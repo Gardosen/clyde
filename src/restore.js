@@ -45,9 +45,11 @@ async function ensureLink(ln, log) {
     let driveOk = false;
     try { driveOk = path.isAbsolute(ln.t) && (await fs.promises.stat(drive)).isDirectory(); } catch { /* fehlt */ }
     if (driveOk) {
-      await fs.promises.mkdir(ln.t, { recursive: true });
-      targetOk = true;
-      log.info(`Link-Ziel angelegt: ${ln.t}`);
+      try {
+        await fs.promises.mkdir(ln.t, { recursive: true });
+        targetOk = true;
+        log.info(`Link-Ziel angelegt: ${ln.t}`);
+      } catch (e) { log.debug(`Link-Ziel ${ln.t} nicht anlegbar: ${e.message}`); }
     }
   }
   await fs.promises.mkdir(path.dirname(ln.abs), { recursive: true });
@@ -75,24 +77,31 @@ async function pruneEmptyDirs(dir, rootSet) {
 // Setzt einen Plan aus planRestore() um. Reihenfolge:
 // benoetigte Chunks aus lokalen Dateien sichern -> fehlende laden -> Backup ->
 // Links -> Dateien schreiben (Platzhalter -> lokales Home) -> loeschen
-export async function applyPlan({ cfg, local, plan, client, opts, log }) {
+export async function applyPlan({ cfg, local, plan, client, opts, log, extra }) {
   const chunkDir = chunkCacheDir();
   await fs.promises.rm(chunkDir, { recursive: true, force: true });
   await fs.promises.mkdir(chunkDir, { recursive: true });
   const stagedPath = (h) => path.join(chunkDir, h);
 
-  // 1. Benoetigte Chunks nach Quelle gruppieren: lokal vorhanden oder laden
+  // 1. Benoetigte Chunks nach Quelle gruppieren: schon berechnet (zusammengefuehrte
+  //    Dateien), lokal vorhanden oder vom Server zu laden
   const needed = new Set();
   for (const f of plan.write) for (const h of f.c) needed.add(h);
   const bySource = new Map();
   const toDownload = [];
+  const staged = new Set();
+  for (const [h, data] of extra || []) {
+    if (!needed.has(h)) continue;
+    await fs.promises.writeFile(stagedPath(h), data);
+    staged.add(h);
+  }
   for (const h of needed) {
+    if (staged.has(h)) continue;
     const src = local.chunkIndex.get(h);
     if (!src) { toDownload.push(h); continue; }
     if (!bySource.has(src.abs)) bySource.set(src.abs, { forms: src.forms, hashes: new Set() });
     bySource.get(src.abs).hashes.add(h);
   }
-  const staged = new Set();
   for (const [abs, { forms, hashes }] of bySource) {
     try {
       for await (const c of chunkStream(canonicalSource(abs, forms))) {

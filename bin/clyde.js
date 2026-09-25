@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { loadConfig } from '../src/config.js';
 import { log } from '../src/log.js';
 import { push, pull } from '../src/commands.js';
+import { mergeSnapshots } from '../src/sync.js';
 import { init, map, list, status, doctor, gc, del, relocate } from '../src/commands-misc.js';
 
 const HELP = `clyde - synchronisiert den Zustand der Claude-Desktop-App-Chats zwischen PCs
@@ -12,11 +13,16 @@ Befehle
   init --server URL --token TOKEN  Ersteinrichtung (fragt im Terminal nach, was fehlt)
        [--project-drive D]          Laufwerk, auf dem hier die Projekte ausserhalb des Home liegen
        [--home PFAD] [--clyde-chat] Home-Verzeichnis ueberschreiben; aufrufenden Chat als Clyde-Chat registrieren
-  push [--clyde-chat] [--force]     lokalen Zustand als Snapshot hochladen
-  pull [ID] [--dry-run] [--force]   Snapshot (neuester oder ID) exakt herstellen; fragt nach
-       [--no-ask] [--clyde-chat]    dem Pfad von Projektordnern, die hier fehlen
+  push [--clyde-chat] [--force]     Aenderungen dieses PCs in den gemeinsamen Stand des Kontos
+                                    einbringen; Chats anderer PCs bleiben erhalten
+  pull [--dry-run] [--force]        Neue und geaenderte Chats anderer PCs holen, eigene behalten;
+       [--no-ask] [--clyde-chat]    fragt nach Projektordnern, die hier fehlen
+       [--create-missing DIR]       fehlende Projektordner unter DIR anlegen (z. B. auf dem Mac)
+  pull ID --exact                   einen Stand exakt herstellen (lokale Abweichungen weg)
+  merge ID ID [...]                 gespeicherte Staende zu einem gemeinsamen Stand fusionieren
   map [--list | --remove N]         Projekt-Zuordnungen anzeigen oder entfernen
-  map --add NEUTRAL PFAD            Projekt-Zuordnung setzen (Befehl steht in der pull-Meldung)
+  map --add NEUTRAL PFAD [--create] Projekt-Zuordnung setzen, --create legt den Ordner an
+                                    (Befehl steht in der pull-Meldung)
   status [-v]                       Unterschiede zum letzten Snapshot, laufende Chats
   list                              Snapshots auf dem Server auflisten
   doctor                            Pfade, Platzhalter, Prozesse und Server pruefen
@@ -56,6 +62,8 @@ try {
       'project-drive': { type: 'string' },
       remove: { type: 'string' },
       plan: { type: 'string' },
+      exact: { type: 'boolean', default: false },
+      'create-missing': { type: 'string' },
       chat: { type: 'string' },
       to: { type: 'string' },
       undo: { type: 'string' },
@@ -66,6 +74,7 @@ try {
       'dry-run': { type: 'boolean', default: false },
       'no-backup': { type: 'boolean', default: false },
       'no-ask': { type: 'boolean', default: false },
+      create: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -88,10 +97,11 @@ const opts = {
   server: values.server, token: values.token, home: values.home, projectDrive: values['project-drive'],
   remove: values.remove, add: values.add, list: values.list, clydeChat: values['clyde-chat'],
   plan: expandHome(values.plan), chat: values.chat, to: expandHome(values.to), undo: expandHome(values.undo),
+  exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
   force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], verbose: values.verbose,
-  id: positionals[1], args: positionals.slice(1),
+  id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
-const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate };
+const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots };
 
 try {
   const fn = commands[cmd];

@@ -22,7 +22,11 @@ const TOKEN = 'test-token';
 const server = createServer({ dataDir: path.join(tmp, 'server'), token: TOKEN, gcGraceMs: 0, log: { log() {}, error: console.error } });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const SERVER = `http://127.0.0.1:${server.address().port}`;
-after(() => { server.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
+// Zweites Konto fuer die Tests mit anderem Benutzer und Laufwerk
+const server2 = createServer({ dataDir: path.join(tmp, 'server2'), token: TOKEN, gcGraceMs: 0, log: { log() {}, error: console.error } });
+await new Promise((r) => server2.listen(0, '127.0.0.1', r));
+const SERVER2 = `http://127.0.0.1:${server2.address().port}`;
+after(() => { server.close(); server2.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
 
 const A = path.join(tmp, 'A');
 const B = path.join(tmp, 'B');
@@ -35,8 +39,8 @@ const rootsFor = (base) => ({
   'claude-history': { path: path.join(base, 'history.jsonl'), kind: 'file' },
   'claude-file-history': false, 'claude-todos': false, 'claude-plans': false,
 });
-function useRoots(base, token = TOKEN, home = undefined, projectDrive = undefined) {
-  saveConfig({ server: SERVER, token, backupsToKeep: 2, roots: rootsFor(base), home, projectDrive });
+function useRoots(base, token = TOKEN, home = undefined, projectDrive = undefined, srv = SERVER) {
+  saveConfig({ server: srv, token, backupsToKeep: 2, roots: rootsFor(base), home, projectDrive });
   return loadConfig();
 }
 const write = (p, data) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, data); };
@@ -96,13 +100,13 @@ test('pull auf leerem PC B stellt Zustand exakt her, inklusive Verzeichnis-Link'
   assert.ok(Math.abs(ma - mb) < 5, `mtime weicht ab: ${ma} vs ${mb}`);
 });
 
-test('pull spiegelt lokale Abweichungen zurueck (loeschen, ueberschreiben, verkuerzen)', async () => {
+test('pull --exact spiegelt lokale Abweichungen zurueck (loeschen, ueberschreiben, verkuerzen)', async () => {
   fs.rmSync(path.join(B, 'projects', 'proj1', 'small.json'));
   write(path.join(B, 'projects', 'extra', 'x.txt'), 'x');
   write(path.join(B, 'projects', 'proj1', 'sub', 'deep', 'tool.txt'), 'changed');
   fs.truncateSync(path.join(B, 'projects', 'proj1', 'big.jsonl'), 5 * MB);
   write(path.join(B, 'sessions', 'local_2.json'), '{}');
-  const r = await pull(useRoots(B), {}, log);
+  const r = await pull(useRoots(B), { exact: true }, log);
   assert.equal(r.deleted, 2);
   assert.equal(r.downloadedChunks, 4, 'small.json, tool.txt und zwei Chunks von big.jsonl fehlen lokal, Chunk 0 wird wiederverwendet');
   assert.deepEqual(treeOf(B), treeOf(A));
@@ -117,10 +121,10 @@ test('pull ohne Abweichung ist ein No-op', async () => {
 test('dry-run aendert nichts', async () => {
   fs.rmSync(path.join(B, 'projects', 'proj1', 'small.json'));
   const before = treeOf(B);
-  const r = await pull(useRoots(B), { dryRun: true }, log);
+  const r = await pull(useRoots(B), { dryRun: true, exact: true }, log);
   assert.equal(r.changed, false);
   assert.deepEqual(treeOf(B), before);
-  await pull(useRoots(B), {}, log);
+  await pull(useRoots(B), { exact: true }, log);
   assert.deepEqual(treeOf(B), treeOf(A));
 });
 
@@ -150,8 +154,8 @@ write(path.join(C, 'projects', 'D--Aegis-episode1', 'chat.jsonl'), '{"cwd":"D:\\
 write(path.join(C, 'projects', 'E--Other', 'chat.jsonl'), '{"cwd":"E:\\\\Other"}\n');
 write(path.join(C, 'sessions', 'local_9.json'), sessionAlice);
 write(path.join(C, 'history.jsonl'), '{"display":"cd /c/Users/alice"}\n');
-const cAlice = () => useRoots(C, TOKEN, ALICE, 'D');
-const cBob = () => useRoots(D, TOKEN, BOB, 'C');
+const cAlice = () => useRoots(C, TOKEN, ALICE, 'D', SERVER2);
+const cBob = () => useRoots(D, TOKEN, BOB, 'C', SERVER2);
 
 test('anderes Konto und Laufwerk: pull schreibt Ordnernamen und Inhalte auf lokale Werte um', async () => {
   const pushed = await push(cAlice(), {}, log);
@@ -191,7 +195,7 @@ test('Projekt-Zuordnung: fehlender Projektordner wird erfragt, gespeichert und a
   const asked = [];
   const r = await pull(cBob(), { ask: async (q) => { asked.push(q); return bobsAegis; } }, log);
   assert.equal(asked.length, 1, 'genau ein fehlendes Projekt muss erfragt werden');
-  assert.ok(asked[0].includes('liegt hier nicht unter C:\\Users\\bob\\Nextcloud\\Aegis'), asked[0]);
+  assert.ok(asked[0].includes('C:\\Users\\bob\\Nextcloud\\Aegis') && asked[0].includes('gibt es hier nicht'), asked[0]);
   assert.equal(r.changed, true);
   const cfg = loadConfig();
   assert.deepEqual(cfg.pathMap, { '@@CLYDE_HOME_RAW@@\\Nextcloud\\Aegis': bobsAegis });
@@ -207,12 +211,13 @@ test('Projekt-Zuordnung: fehlender Projektordner wird erfragt, gespeichert und a
   const lines = [];
   await map(cfg, { list: true }, { info: (s) => lines.push(s), warn() {} });
   assert.ok(lines.join('\n').includes(bobsAegis));
-  await map(cfg, { remove: '1' }, { info() {}, warn() {} });
+  await map(cfg, { remove: '1' }, { info() {}, warn() {}, debug() {} });
   assert.deepEqual(loadConfig().pathMap, {});
-  const back = await pull(loadConfig(), { noAsk: true }, log);
-  assert.equal(back.changed, true);
-  assert.ok(fs.existsSync(path.join(D, 'projects', 'C--Users-bob-Nextcloud-Aegis', 'chat.jsonl')));
+  assert.ok(fs.existsSync(path.join(D, 'projects', 'C--Users-bob-Nextcloud-Aegis', 'chat.jsonl')), 'Entfernen der Zuordnung stellt die Dateien sofort zurueck');
   assert.ok(!fs.existsSync(path.join(D, 'projects', key)));
+  assert.ok(read(path.join(D, 'sessions', 'local_9.json')).includes('"cwd":"C:\\\\Users\\\\bob\\\\Nextcloud\\\\Aegis"'), 'Pfad im Inhalt zurueckgesetzt');
+  assert.equal((await pull(loadConfig(), { noAsk: true }, log)).changed, false, 'danach ist nichts mehr abzugleichen');
+  assert.equal((await push(loadConfig(), {}, log)).uploadedChunks, 0, 'und nichts hochzuladen: kein scheinbar verschobener Chat');
 });
 
 test('ohne Terminal wird ein fehlender Projektordner nur gemeldet, Projektlaufwerk wird uebernommen', async () => {
@@ -220,9 +225,9 @@ test('ohne Terminal wird ein fehlender Projektordner nur gemeldet, Projektlaufwe
   fs.mkdirSync(path.join(E, 'projects'), { recursive: true });
   const warned = [];
   const quiet = { info() {}, debug() {}, warn: (s) => warned.push(s), error() {} };
-  await pull(useRoots(E, TOKEN, BOB), { dryRun: true, noAsk: true }, quiet);
-  assert.ok(warned.some((w) => w.includes('existiert hier nicht')), warned.join('\n'));
-  const latest = await new Client(SERVER, TOKEN).getSnapshot('latest');
+  await pull(useRoots(E, TOKEN, BOB, undefined, SERVER2), { dryRun: true, noAsk: true }, quiet);
+  assert.ok(warned.some((w) => w.includes('gibt es hier nicht') && w.includes('clyde map --add')), warned.join('\n'));
+  const latest = await new Client(SERVER2, TOKEN).getSnapshot('latest');
   assert.equal(loadConfig().projectDrive, latest.projectDrive, 'Projektlaufwerk aus dem Snapshot uebernommen');
   assert.deepEqual(loadConfig().pathMap, {});
 });
@@ -246,7 +251,7 @@ test('Dashboard-API liefert Chats mit Titel, Projektpfad und Transkript', async 
     } },
   }));
   await push(cAlice(), {}, log);
-  const c = new Client(SERVER, TOKEN);
+  const c = new Client(SERVER2, TOKEN);
   const d = await c.json('GET', '/snapshots/latest/chats');
   assert.equal(d.snapshot.home, ALICE);
   assert.equal(d.snapshot.projectDrive, 'D');
@@ -274,7 +279,7 @@ test('Dashboard-API liefert Chats mit Titel, Projektpfad und Transkript', async 
 });
 
 test('alter Snapshot (v1) wird mit klarer Meldung abgelehnt', async () => {
-  const c = new Client(SERVER, TOKEN);
+  const c = new Client(SERVER2, TOKEN);
   await c.putSnapshot({ version: 1, id: '20000101-000000000-alt', createdAt: '2000-01-01T00:00:00.000Z', host: 'h', user: 'u', roots: {}, stats: { files: 0, bytes: 0, chunks: 0 } });
   await assert.rejects(pull(cBob(), { id: '20000101-000000000-alt' }, log), /Format v1/);
   await c.deleteSnapshot('20000101-000000000-alt');

@@ -254,6 +254,12 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
         if (!hashes.every(isHash)) throw httpError(400, 'Chunk-Hash ungueltig');
         const missing = await store.missing(hashes);
         if (missing.length) return send(res, 409, { error: `${missing.length} Chunks fehlen auf dem Server, Push wiederholen`, missing: missing.slice(0, 20) });
+        // Zusammenfuehren: nur speichern, wenn der gemeinsame Stand seit dem Lesen
+        // unveraendert ist; sonst fuehrt der Client neu zusammen
+        if (Object.prototype.hasOwnProperty.call(man, 'parent')) {
+          const latest = (await store.listSnapshots())[0];
+          if ((latest?.id || null) !== man.parent) return send(res, 409, { error: 'Der gemeinsame Stand hat sich inzwischen geaendert', latest: latest?.id || null });
+        }
         await store.putSnapshot(man);
         log.log(`Snapshot ${id} von ${man.host} fuer ${target} gespeichert (${man.stats?.files} Dateien)`);
         return send(res, 200, { ok: true, id });

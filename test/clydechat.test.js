@@ -84,7 +84,7 @@ test('push aus dem Clyde-Chat laesst den eigenen Chat aus und registriert ihn', 
   assert.ok(all.includes(OTHER));
 });
 
-test('pull im Clyde-Chat eines anderen PCs: eigener Chat bleibt, offene Chats werden gemeldet', async () => {
+test('pull im Clyde-Chat eines anderen PCs: eigener Chat und eigene Chats bleiben, offene Chats werden gemeldet', async () => {
   const B = PC('B');
   const OWN_B = '44444444-4444-4444-4444-444444444444';
   const OWN_B_HOST = 'local_dddddddd-dddd-dddd-dddd-dddddddddddd';
@@ -98,8 +98,8 @@ test('pull im Clyde-Chat eines anderen PCs: eigener Chat bleibt, offene Chats we
   assert.equal(r.changed, true);
   assert.equal(fs.readFileSync(path.join(B, 'projects', 'D--proj', `${OWN_B}.jsonl`), 'utf8'), '{"text":"clyde-chat-b"}\n', 'eigener Chat unangetastet');
   assert.ok(fs.existsSync(path.join(B, 'sessions', 'org', 'acct', `${OWN_B_HOST}.json`)));
-  assert.equal(fs.readFileSync(path.join(B, 'projects', 'D--proj', `${OTHER}.jsonl`), 'utf8'), '{"text":"projekt"}\n', 'anderer Chat auf Stand von A');
-  assert.ok(!fs.existsSync(path.join(B, 'projects', 'D--proj', `${FRESH}.jsonl`)), 'exakter Spiegel: Chat nur auf B wird entfernt');
+  assert.equal(fs.readFileSync(path.join(B, 'projects', 'D--proj', `${OTHER}.jsonl`), 'utf8'), '{"text":"projekt-alt-und-laenger"}\n{"text":"projekt"}\n', 'auf beiden PCs weitergefuehrter Chat: Zeilen beider Seiten, neuere Fassung zuerst');
+  assert.ok(fs.existsSync(path.join(B, 'projects', 'D--proj', `${FRESH}.jsonl`)), 'Chat, den es nur auf B gibt, bleibt');
   assert.deepEqual(r.openTouched, ['"Projekt"']);
   assert.ok(r.hints.some((h) => h.includes('neu starten')));
 });

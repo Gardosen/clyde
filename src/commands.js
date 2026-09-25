@@ -13,9 +13,10 @@ import { lastSnapshotPath, claudeHome, clydeHome } from './paths.js';
 import { saveConfig, configFromRaw } from './config.js';
 import { canonicalize, localize, allForms, normalizeHome } from './rewrite.js';
 import { fmtBytes } from './log.js';
-import { readAppGroups } from './appgroups.js';
+import { syncPush, prepare, localPlan, fetchLatest, resolveUnions, describe, remoteContent, localCanonical, projectChats } from './sync.js';
+import { flatten, saveBase } from './merge.js';
 
-export const MANIFEST_VERSION = 2;
+export { MANIFEST_VERSION } from './sync.js';
 
 function makeId() {
   const d = new Date();
@@ -47,7 +48,7 @@ export function registerClydeChat(cfg, log) {
 
 // Projektordner, auf die die Chats zeigen (aus dem Sidebar-Index der Desktop-App),
 // in neutraler Form fuer das Manifest. Clyde-Chats zaehlen nicht mit.
-async function collectProjects(cfg) {
+export async function collectProjects(cfg) {
   const root = cfg.roots['desktop-sessions'];
   const out = new Set();
   if (!root) return [];
@@ -97,65 +98,9 @@ async function* missingChunks(local, missing) {
 export async function push(cfg, opts, log) {
   if (opts.clydeChat) cfg = registerClydeChat(cfg, log);
   checkGuard('Push', opts.force, log);
-  const client = new Client(cfg.server, cfg.token);
-  await client.health();
-  const limit = cfg.uploadBatchMiB * 1024 * 1024;
-  let local;
-  let missing;
-  let uploadedChunks = 0;
-  let uploadedBytes = 0;
-
-  // Dateien, die sich waehrend des Uploads aendern, werden neu gehasht und der
-  // Upload wird bis zu dreimal wiederholt
-  for (let attempt = 1; ; attempt++) {
-    log.info(attempt === 1 ? `Scanne lokalen Zustand (Home ${cfg.home}) ...` : `Scanne erneut (Versuch ${attempt}) ...`);
-    local = await buildLocalManifest(cfg, log);
-    const ex = local.stats.excluded ? `, ${local.stats.excluded} Dateien des Clyde-Chats ausgelassen` : '';
-    log.info(`  ${local.stats.files} Dateien, ${fmtBytes(local.stats.bytes)}, ${local.stats.chunks} Chunks (${local.stats.hashedFiles} neu gehasht${ex})`);
-    const all = [...local.chunkIndex.keys()];
-    missing = [];
-    for (let i = 0; i < all.length; i += 5000) missing.push(...(await client.missing(all.slice(i, i + 5000))).missing);
-    log.info(`  ${missing.length} Chunks fehlen auf dem Server`);
-
-    let batch = [];
-    let batchBytes = 0;
-    const flush = async () => {
-      if (!batch.length) return;
-      const r = await client.upload(batch);
-      uploadedChunks += r.stored + r.skipped;
-      uploadedBytes += batchBytes;
-      batch = [];
-      batchBytes = 0;
-      log.info(`  hochgeladen ${uploadedChunks}/${missing.length} Chunks (${fmtBytes(uploadedBytes)})`);
-    };
-    try {
-      for await (const c of missingChunks(local, missing)) {
-        if (batch.length && (batchBytes + c.data.length > limit || batch.length >= 400)) await flush();
-        batch.push(c);
-        batchBytes += c.data.length;
-      }
-      await flush();
-      break;
-    } catch (e) {
-      await flush().catch(() => {});
-      if (e.code !== 'CHANGED' || attempt >= 3) throw e;
-      log.warn(`${e.message}; wird neu erfasst.`);
-    }
-  }
-
-  const manifest = {
-    version: MANIFEST_VERSION, id: makeId(), createdAt: new Date().toISOString(),
-    host: os.hostname(), user: os.userInfo().username, home: cfg.home, projectDrive: cfg.projectDrive, platform: process.platform, claudeHome: claudeHome(),
-    rootPaths: Object.fromEntries(Object.entries(cfg.roots).map(([n, r]) => [n, r.path])),
-    projects: await collectProjects(cfg),
-    appGroups: readAppGroups(cfg),
-    roots: manifestRoots(local.roots),
-    stats: { files: local.stats.files, bytes: local.stats.bytes, chunks: local.stats.chunks },
-  };
-  await client.putSnapshot(manifest);
-  saveLast({ id: manifest.id, createdAt: manifest.createdAt, direction: 'push' });
-  log.info(`Snapshot ${manifest.id} gespeichert (${uploadedChunks} Chunks / ${fmtBytes(uploadedBytes)} uebertragen, ${manifest.projects.length} Projektordner vermerkt).`);
-  return { id: manifest.id, uploadedChunks, uploadedBytes, stats: manifest.stats, projects: manifest.projects, excluded: local.stats.excluded };
+  const r = await syncPush(cfg, opts, log);
+  saveLast({ id: r.id, createdAt: new Date().toISOString(), direction: 'push' });
+  return r;
 }
 
 async function ttyAsk(question) {
@@ -163,67 +108,60 @@ async function ttyAsk(question) {
   try { return await rl.question(question); } finally { rl.close(); }
 }
 
-// Prueft, ob die Projektordner des Snapshots hier existieren. Fehlende werden im
-// Terminal erfragt und als Zuordnung gespeichert; ohne Terminal (z. B. im
-// Clyde-Chat) wird gemeldet, mit welchem Befehl sich die Zuordnung setzen laesst.
-// Liefert die (evtl. aktualisierte) Konfiguration und die fehlenden Ordner.
+const lastSegment = (p) => String(p).split(/[\\/]+/).filter(Boolean).pop() || 'projekt';
+
+// Prueft, ob die Projektordner des Stands hier existieren. Fehlende werden im
+// Terminal erfragt, mit --create-missing DIR unter DIR angelegt, sonst gemeldet
+// (mit dem Befehl, der die Zuordnung setzt). Liefert die (evtl. aktualisierte)
+// Konfiguration und die fehlenden Ordner.
 export async function resolveProjects(snap, cfg, opts, log) {
   const ask = opts.ask || (opts.noAsk || !process.stdin.isTTY ? null : ttyAsk);
   const raw = { ...cfg.raw };
   let changed = false;
   const missing = [];
-  if (!cfg.projectDrive && snap.projectDrive) {
+  // Laufwerk nur auf Windows uebernehmen; macOS und Linux kennen keine Laufwerksbuchstaben
+  if (!cfg.projectDrive && snap.projectDrive && process.platform === 'win32') {
     raw.projectDrive = snap.projectDrive;
     changed = true;
-    log.info(`Projektlaufwerk hier nicht gesetzt, uebernehme "${snap.projectDrive}" aus dem Snapshot (aendern: clyde init --project-drive X).`);
+    log.info(`Projektlaufwerk hier nicht gesetzt, uebernehme "${snap.projectDrive}" aus dem Stand (aendern: clyde init --project-drive X).`);
   }
   let cur = changed ? configFromRaw(raw) : cfg;
   const sourceForms = allForms(snap.home, snap.projectDrive, {});
-  for (const canonical of Array.isArray(snap.projects) ? snap.projects : []) {
-    const local = localize(canonical, cur.forms);
-    if (fs.existsSync(local)) continue;
-    const shown = localize(canonical, sourceForms);
-    if (!ask) {
-      missing.push({ canonical, shown, local });
-      log.warn(`Projektordner ${local} existiert hier nicht (auf ${snap.host}: ${shown}).\n  Zuordnen mit: clyde map --add "${canonical}" "PFAD-AUF-DIESEM-PC"`);
-      continue;
-    }
-    const answer = (await ask(`Projekt "${shown}" (${snap.host}) liegt hier nicht unter ${local}.\n  Pfad auf diesem PC (leer = ueberspringen): `)).trim();
-    if (!answer) continue;
-    const localPath = normalizeHome(path.resolve(answer.replace(/^["']|["']$/g, '')));
-    if (!fs.existsSync(localPath)) { log.warn(`${localPath} existiert nicht, uebersprungen.`); continue; }
+  const setMap = (canonical, localPath, shown) => {
     raw.pathMap = { ...(raw.pathMap || {}), [canonical]: localPath };
     changed = true;
     cur = configFromRaw(raw);
     log.info(`  Zuordnung gespeichert: ${shown} -> ${localPath}`);
+  };
+  for (const canonical of Array.isArray(snap.projects) ? snap.projects : []) {
+    const local = localize(canonical, cur.forms);
+    if (!/@@CLYDE_/.test(local) && fs.existsSync(local)) continue;
+    const shown = localize(canonical, sourceForms);
+    if (opts.createMissing) {
+      const dir = normalizeHome(path.join(path.resolve(opts.createMissing), lastSegment(shown)));
+      fs.mkdirSync(dir, { recursive: true });
+      setMap(canonical, dir, shown);
+      continue;
+    }
+    const chats = opts.chatTitles?.get(canonical) || [];
+    if (!ask) {
+      missing.push({ canonical, shown, local, chats });
+      log.warn(`Projektordner ${shown} (von ${snap.host}) gibt es hier nicht.${chats.length ? `\n  Chats: ${chats.join(' | ')}` : ''}\n  Zuordnen mit: clyde map --add "${canonical}" "PFAD-AUF-DIESEM-PC" [--create]`);
+      continue;
+    }
+    const answer = (await ask(`Projekt "${shown}" (${snap.host}) gibt es hier nicht${local !== shown ? ` unter ${local}` : ''}.\n  Pfad auf diesem PC (leer = ueberspringen): `)).trim();
+    if (!answer) continue;
+    const localPath = normalizeHome(path.resolve(answer.replace(/^["']|["']$/g, '')));
+    if (!fs.existsSync(localPath)) { log.warn(`${localPath} existiert nicht, uebersprungen.`); continue; }
+    setMap(canonical, localPath, shown);
   }
   if (changed) saveConfig(raw);
   cur.missingProjects = missing;
   return cur;
 }
 
-export async function pull(cfg, opts, log) {
-  if (opts.clydeChat) cfg = registerClydeChat(cfg, log);
-  const client = new Client(cfg.server, cfg.token);
-  const snap = await client.getSnapshot(opts.id || 'latest');
-  if (snap.version !== MANIFEST_VERSION) {
-    throw new Error(`Snapshot ${snap.id} hat Format v${snap.version}, dieser Client braucht v${MANIFEST_VERSION}. Auf dem Quell-PC mit aktuellem Clyde neu pushen.`);
-  }
-  log.info(`Snapshot ${snap.id} von ${snap.host} (${snap.user}, Home ${snap.home}), erstellt ${snap.createdAt}: ${snap.stats.files} Dateien, ${fmtBytes(snap.stats.bytes)}`);
-  cfg = await resolveProjects(snap, cfg, opts, log);
-  if (snap.home !== cfg.home) log.info(`Home-Verzeichnis wird umgeschrieben: ${snap.home} -> ${cfg.home}`);
-  log.info('Scanne lokalen Zustand ...');
-  const local = await buildLocalManifest(cfg, log);
-  const plan = planRestore(local.roots, snap.roots, cfg.roots, cfg.forms, log, cfg.exclude);
-  const newCount = plan.write.filter((f) => f.isNew).length;
-  log.info(`Plan: ${newCount} neu, ${plan.write.length - newCount} geaendert (${fmtBytes(plan.bytesToWrite)}), ${plan.delete.length} loeschen, ${plan.unchanged} unveraendert`);
-  if (opts.verbose || opts.dryRun) {
-    for (const f of plan.write) log.info(`  ${f.isNew ? '+' : '~'} ${f.root}/${f.lp}`);
-    for (const d of plan.delete) log.info(`  - ${d.root}/${d.lp}`);
-  }
-
-  // Im Clyde-Chat: welche anderen, gerade in der App geoeffneten Chats bekommen
-  // einen neuen Stand? Deren Prozess arbeitet sonst mit dem alten weiter.
+// Hinweise fuer den Clyde-Chat: welche offenen Chats bekommen einen neuen Stand?
+function openChatHints(plan) {
   const own = ownSession();
   const touchedFiles = [...plan.write, ...plan.delete];
   const openTouched = own
@@ -231,29 +169,62 @@ export async function pull(cfg, opts, log) {
     : [];
   const newSidebar = plan.write.filter((f) => f.root === 'desktop-sessions' && f.isNew).length;
   const hints = [];
-  if (openTouched.length) {
-    hints.push(`Diese Chats sind gerade in der App geoeffnet und bekommen einen neuen Stand: ${openTouched.map(describeSession).join(', ')}. Bevor du dort weiterschreibst, die App einmal neu starten.`);
-  }
-  if (own && newSidebar) {
-    hints.push(`${newSidebar} neue Chats kommen dazu. Falls sie nicht in der Seitenleiste erscheinen, die App einmal neu starten.`);
-  }
+  if (openTouched.length) hints.push(`Diese Chats sind gerade in der App geoeffnet und bekommen einen neuen Stand: ${openTouched.map(describeSession).join(', ')}. Bevor du dort weiterschreibst, die App einmal neu starten.`);
+  if (own && newSidebar) hints.push(`${newSidebar} neue Chats kommen dazu. Falls sie nicht in der Seitenleiste erscheinen, die App einmal neu starten.`);
+  return { openTouched: openTouched.map(describeSession), newSidebar, hints };
+}
 
+async function finishPull({ cfg, opts, log, snap, local, plan, client, extra, summary, baseFiles }) {
+  if (opts.verbose || opts.dryRun) {
+    for (const f of plan.write) log.info(`  ${f.isNew ? '+' : '~'} ${f.root}/${f.lp}`);
+    for (const d of plan.delete) log.info(`  - ${d.root}/${d.lp}`);
+  }
+  const { openTouched, newSidebar, hints } = openChatHints(plan);
   plan.links = (await Promise.all(plan.links.map(async (ln) => { try { await fs.promises.lstat(ln.abs); return null; } catch { return ln; } }))).filter(Boolean);
-  const base = { id: snap.id, missingProjects: cfg.missingProjects, openTouched: openTouched.map(describeSession), newSidebar, hints };
+  const info = { id: snap.id, missingProjects: cfg.missingProjects, openTouched, newSidebar, hints, ...summary };
   if (!plan.write.length && !plan.delete.length && !plan.links.length) {
-    log.info('Lokaler Zustand entspricht bereits dem Snapshot.');
-    saveLast({ id: snap.id, createdAt: snap.createdAt, direction: 'pull' });
-    return { changed: false, ...base };
+    log.info('Dieser PC ist auf dem Stand des Kontos.');
+    if (!opts.dryRun) { saveBase(cfg, baseFiles, snap.id); saveLast({ id: snap.id, createdAt: snap.createdAt, direction: 'pull' }); }
+    return { changed: false, ...info };
   }
   if (opts.dryRun) {
     for (const h of hints) log.info(`Hinweis: ${h}`);
     log.info('Trockenlauf, nichts geaendert.');
-    return { changed: false, plan, ...base };
+    return { changed: false, plan, ...info };
   }
   checkGuard('Pull', opts.force, log);
-  const result = await applyPlan({ cfg, local, plan, client, opts, log });
+  const result = await applyPlan({ cfg, local, plan, client, opts, log, extra });
+  saveBase(cfg, baseFiles, snap.id);
   saveLast({ id: snap.id, createdAt: snap.createdAt, direction: 'pull' });
-  log.info(`Fertig: Zustand von ${snap.id} hergestellt (${result.downloadedChunks} Chunks / ${fmtBytes(result.downloadedBytes)} geladen${result.backupDir ? `, Backup unter ${result.backupDir}` : ''}).`);
+  log.info(`Fertig (${result.downloadedChunks} Chunks / ${fmtBytes(result.downloadedBytes)} geladen${result.backupDir ? `, Sicherung unter ${result.backupDir}` : ''}).`);
   for (const h of hints) log.info(`Hinweis: ${h}`);
-  return { changed: true, ...base, ...result };
+  return { changed: true, ...info, ...result };
+}
+
+// Pull: Aenderungen anderer PCs holen, eigene behalten (Standard).
+// Mit --exact: Stand exakt herstellen, lokale Abweichungen werden entfernt.
+export async function pull(cfg, opts, log) {
+  if (opts.clydeChat) cfg = registerClydeChat(cfg, log);
+  const client = new Client(cfg.server, cfg.token);
+  const snap = await fetchLatest(client, opts.id);
+  if (!snap) { log.info('Auf dem Server liegt noch kein Stand. Erst auf einem PC "clyde push" ausfuehren.'); return { changed: false }; }
+  log.info(`${opts.exact ? 'Stand' : 'Gemeinsamer Stand'} ${snap.id}, zuletzt von ${snap.host} (${snap.user}), ${snap.createdAt}: ${snap.stats.files} Dateien, ${fmtBytes(snap.stats.bytes)}`);
+  const chatTitles = await projectChats(client, snap).catch(() => new Map());
+  cfg = await resolveProjects(snap, cfg, { ...opts, chatTitles }, log);
+  if (snap.home !== cfg.home) log.info(`Home-Verzeichnis wird umgeschrieben: ${snap.home} -> ${cfg.home}`);
+  log.info('Scanne lokalen Zustand ...');
+  if (opts.exact) {
+    const local = await buildLocalManifest(cfg, log);
+    const plan = planRestore(local.roots, snap.roots, cfg.roots, cfg.forms, log, cfg.exclude);
+    const newCount = plan.write.filter((f) => f.isNew).length;
+    log.info(`Plan (exakt): ${newCount} neu, ${plan.write.length - newCount} geaendert (${fmtBytes(plan.bytesToWrite)}), ${plan.delete.length} loeschen, ${plan.unchanged} unveraendert`);
+    const R = flatten(snap.roots, Object.keys(cfg.roots));
+    return finishPull({ cfg, opts, log, snap, local, plan, client, extra: null, summary: {}, baseFiles: R });
+  }
+  const { local, R, decisions } = await prepare(cfg, client, snap, log);
+  const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r));
+  const plan = localPlan(cfg, decisions, snap);
+  const s = describe(decisions);
+  log.info(`Plan: ${plan.write.length} Dateien neu oder aktualisiert (${fmtBytes(plan.bytesToWrite)}), ${s.pullDelete} auf einem anderen PC geloescht${s.union ? `, ${s.union} zeilenweise zusammengefuehrt` : ''}${s.conflicts - s.union ? `, ${s.conflicts - s.union} Konflikte nach Datum entschieden` : ''}. Eigene Aenderungen, die noch hochzuladen sind: ${s.push + s.pushDelete + s.union}.`);
+  return finishPull({ cfg, opts, log, snap, local, plan, client, extra, summary: { pending: s.push + s.pushDelete + s.union }, baseFiles: R });
 }
