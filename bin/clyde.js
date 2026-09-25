@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import os from 'node:os';
 import { parseArgs } from 'node:util';
 import { loadConfig } from '../src/config.js';
 import { log } from '../src/log.js';
@@ -75,6 +76,10 @@ try {
 }
 
 const { values, positionals } = args;
+// "~" am Anfang eines Pfads als Benutzerordner lesen; cmd.exe erweitert es nicht selbst
+function expandHome(p) {
+  return typeof p === 'string' ? p.replace(/^~(?=$|[\\/])/, os.homedir()) : p;
+}
 const cmd = positionals[0];
 if (values.help || !cmd) { console.log(HELP); process.exit(cmd ? 0 : 1); }
 log.setVerbose(values.verbose);
@@ -82,7 +87,7 @@ log.setVerbose(values.verbose);
 const opts = {
   server: values.server, token: values.token, home: values.home, projectDrive: values['project-drive'],
   remove: values.remove, add: values.add, list: values.list, clydeChat: values['clyde-chat'],
-  plan: values.plan, chat: values.chat, to: values.to, undo: values.undo,
+  plan: expandHome(values.plan), chat: values.chat, to: expandHome(values.to), undo: expandHome(values.undo),
   force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1),
 };
