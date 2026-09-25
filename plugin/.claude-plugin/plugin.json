@@ -1,7 +1,7 @@
 {
   "name": "clyde",
   "displayName": "Clyde",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Sync your Claude desktop app chats between computers: /clyde:push on one PC, /clyde:pull on the other. Needs your own Clyde backend (Docker), Node.js 20 and the Clyde CLI. Works in Claude Code only. Docs: https://github.com/Gardosen/clyde",
   "author": {
     "name": "Gardosen",

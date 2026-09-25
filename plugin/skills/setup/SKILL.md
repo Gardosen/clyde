@@ -21,7 +21,7 @@ Argumente vom Nutzer: `$ARGUMENTS`
 1. **CLI pruefen.** `clyde --help` ausfuehren.
    - Fehlt der Befehl, `node --version` pruefen (Node 20 oder neuer noetig) und dem
      Nutzer die Installation vorschlagen:
-     `npm install -g github:Gardosen/clyde#v0.3.3`
+     `npm install -g github:Gardosen/clyde#v0.3.4`
      Erst nach seiner Zustimmung ausfuehren, dann `clyde --help` erneut pruefen.
 
 2. **Angaben sammeln.** Gebraucht werden:
