@@ -1,12 +1,14 @@
 {
   "name": "clyde",
-  "version": "0.3.0",
-  "description": "Client-Gegenstueck zum Clyde-Backend: synchronisiert den Zustand der Claude-App-Chats zwischen PCs. Befehle /clyde:setup, /clyde:push, /clyde:pull, /clyde:status aus einem eigenen Clyde-Chat. Projekt und Backend: https://github.com/Gardosen/clyde",
+  "displayName": "Clyde",
+  "version": "0.3.1",
+  "description": "Sync your Claude desktop app chats between computers: /clyde:push on one PC, /clyde:pull on the other. Needs your own Clyde backend (Docker), Node.js 20 and the Clyde CLI. Works in Claude Code only. Docs: https://github.com/Gardosen/clyde",
   "author": {
-    "name": "Gardosen"
+    "name": "Gardosen",
+    "url": "https://github.com/Gardosen"
   },
   "homepage": "https://github.com/Gardosen/clyde",
   "repository": "https://github.com/Gardosen/clyde",
   "license": "MIT",
-  "keywords": ["sync", "chats", "backup", "multi-pc", "clyde"]
+  "keywords": ["sync", "chats", "backup", "multi-pc", "claude-code"]
 }

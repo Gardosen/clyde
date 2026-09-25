@@ -39,6 +39,17 @@
   form.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .secret { background:var(--bg); border:1px dashed var(--accent); border-radius:8px; padding:10px; margin-top:10px; }
   .secret code { display:block; word-break:break-all; margin:4px 0 8px; font-size:12.5px; }
+  .grid2 { display:grid; grid-template-columns: minmax(0,1fr) 380px; gap:16px; align-items:start; }
+  @media (max-width: 1100px) { .grid2 { grid-template-columns: 1fr; } }
+  .summary { display:flex; flex-wrap:wrap; gap:10px; margin:0 0 12px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 14px; min-width:130px; }
+  .stat b { display:block; font-size:17px; font-weight:600; } .stat span { color:var(--muted); font-size:12.5px; }
+  .banner { background:var(--card); border:1px solid var(--warn); border-radius:10px; padding:10px 14px; margin-bottom:12px; }
+  .banner b { color:var(--warn); }
+  details.tech { margin-top:16px; } details.tech > summary { cursor:pointer; color:var(--muted); font-weight:600; }
+  .techgrid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-top:12px; }
+  .sub { color:var(--muted); font-size:12.5px; margin-top:2px; }
+  #detail dt.group { grid-column:1/-1; color:var(--fg); font-weight:600; margin-top:8px; }
   #login { max-width:360px; margin:12vh auto 0; }
   #login label { display:block; margin:10px 0 4px; color:var(--muted); }
   #login input { width:100%; }
@@ -76,27 +87,32 @@
   <div id="msg" class="msg bad"></div>
 
   <section data-view="chats">
-    <div class="toolbar"><select id="snap"></select><button id="reload">Neu laden</button></div>
-    <div class="grid">
-      <div class="stack">
-        <section class="card"><h2>Snapshot</h2><dl id="meta"></dl></section>
-        <section class="card"><h2>Pfadwerte des Quell-PCs</h2><dl id="paths"></dl></section>
-        <section class="card"><h2>Projektordner der Chats in der App</h2><div id="projects" class="mono"></div></section>
-        <section class="card"><h2>Projekte nach Transkript-Groesse</h2><table id="ptable"><thead><tr><th>Schluessel (Quell-PC)</th><th class="num">Chats</th><th class="num">MB</th></tr></thead><tbody></tbody></table></section>
-      </div>
-      <div class="stack">
-        <section class="card">
-          <div class="toolbar"><h2 style="margin:0">Chats</h2><input id="filter" placeholder="Filter: Titel, Pfad, Modell, ID" size="40">
-            <label title="Transkripte ohne Eintrag in der Chatliste der App: in der App geloeschte Chats und aeltere oder im Terminal gefuehrte Sitzungen"><input id="showAll" type="checkbox"> auch Transkripte ohne Eintrag in der App</label>
-            <span id="count" class="muted"></span></div>
-          <table id="chats"><thead><tr>
-            <th data-k="title">Titel</th><th data-k="cwdShown">Projektordner</th><th data-k="model">Modell</th>
-            <th data-k="lastActivityAt">Zuletzt aktiv</th><th data-k="size" class="num">MB</th><th data-k="chunks" class="num">Chunks</th>
-          </tr></thead><tbody></tbody></table>
-        </section>
-        <section class="card"><h2>Details</h2><dl id="detail"><dd class="muted" style="grid-column:1/-1">Chat in der Liste anklicken.</dd></dl></section>
-      </div>
+    <div class="toolbar"><label class="muted" for="snap">Stand</label><select id="snap"></select><button id="reload">Neu laden</button></div>
+    <div id="snapWarn" class="banner" hidden></div>
+    <div id="summary" class="summary"></div>
+    <div class="grid2">
+      <section class="card">
+        <div class="toolbar">
+          <input id="filter" placeholder="Suchen: Titel, Projektordner, Modell" size="36">
+          <label title="In der App geloeschte Chats sowie aeltere oder im Terminal gefuehrte Sitzungen. Ihre Transkripte liegen noch auf der Platte und werden mit synchronisiert."><input id="showAll" type="checkbox"> <span id="showAllText">weitere Transkripte zeigen</span></label>
+          <span id="count" class="muted"></span>
+        </div>
+        <table id="chats"><thead><tr>
+          <th data-k="title">Chat</th><th data-k="cwdShown">Projektordner</th><th data-k="model">Modell</th>
+          <th data-k="lastActivityAt">Zuletzt aktiv</th><th data-k="size" class="num">Größe</th>
+        </tr></thead><tbody></tbody></table>
+      </section>
+      <section class="card"><h2>Details</h2><dl id="detail"><dd class="muted" style="grid-column:1/-1">Einen Chat in der Liste anklicken.</dd></dl></section>
     </div>
+    <details class="card tech">
+      <summary>Technische Details zu diesem Stand</summary>
+      <div class="techgrid">
+        <div><h2>Stand</h2><dl id="meta"></dl></div>
+        <div><h2>Pfade auf dem Quell-PC</h2><dl id="paths"></dl></div>
+        <div><h2>Projektordner der Chats</h2><div id="projects" class="mono"></div></div>
+        <div><h2>Transkripte je Projektordner</h2><table id="ptable"><thead><tr><th>Projektordner</th><th class="num">Transkripte</th><th class="num">MB</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </details>
   </section>
 
   <section data-view="access" hidden class="stack" style="max-width:900px">
@@ -222,13 +238,23 @@ async function loadSnapshot(id) {
   try { data = await api('GET', q('/snapshots/' + encodeURIComponent(id) + '/chats')); selected = null; renderSnapshot(); render(); }
   catch (e) { say($('#msg'), e.message); }
 }
+const stat = (value, label) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+const kindLabel = (c) => c.kind === 'app' ? '' : c.kind === 'deleted' ? 'in der App gelöscht' : c.origin === 'claude-desktop' ? 'aus der App, ohne Eintrag in der Chatliste' : 'Terminal oder ältere Sitzung';
 function renderSnapshot() {
   const s = data.snapshot;
+  const others = data.counts.deleted + data.counts.transcript;
+  $('#summary').innerHTML = stat(s.host, 'Quell-PC (' + s.user + ')') + stat(fmtTime(s.createdAt), 'Stand vom')
+    + stat(data.counts.app, 'Chats in der App') + stat(others, 'weitere Transkripte') + stat(fmtMB(s.stats.bytes) + ' MB', 'Gesamtgröße');
+  $('#snapWarn').hidden = !s.chatListMissing;
+  $('#snapWarn').innerHTML = '<b>Dieser Stand enthält die Chatliste der App nicht.</b> Er wurde vermutlich mit einer älteren Clyde-Version aus einem Terminal hochgeladen, die den Speicherort der Store-App nicht kannte. Deshalb erscheinen hier alle Chats nur als Transkripte. Mit Clyde 0.3.1 oder neuer einmal neu hochladen.';
+  $('#showAllText').textContent = `weitere ${others} Transkripte zeigen`;
+  $('#showAll').parentElement.hidden = !others;
+  if (!data.counts.app && others) $('#showAll').checked = true;
   $('#meta').innerHTML = row('ID', esc(s.id)) + row('Erstellt', esc(fmtTime(s.createdAt))) + row('Quell-PC', esc(s.host + ' / ' + s.user + ' / ' + s.platform))
     + row('Dateien', esc(s.stats.files + ' (' + fmtMB(s.stats.bytes) + ' MB, ' + s.stats.chunks + ' Chunks)'))
     + row('Chats in der App', esc(data.counts.app))
-    + row('In der App geloescht', esc(data.counts.deleted) + ' <span class="muted">(Transkript liegt noch vor)</span>')
-    + row('Nur Transkript', esc(data.counts.transcript) + ' <span class="muted">(aeltere oder Terminal-Sitzungen)</span>')
+    + row('In der App gelöscht', esc(data.counts.deleted))
+    + row('Terminal oder älter', esc(data.counts.transcript))
     + Object.entries(s.roots).map(([n, r]) => row(n, esc(r.missing ? 'fehlt auf dem Quell-PC' : r.files + ' Dateien, ' + fmtMB(r.bytes) + ' MB' + (r.links ? ', ' + r.links + ' Links' : '')))).join('');
   $('#paths').innerHTML = row('Home', esc(s.home) + ' <span class="tag">@@CLYDE_HOME_*@@</span>')
     + row('Projektlaufwerk', s.projectDrive ? esc(s.projectDrive + ':') + ' <span class="tag">@@CLYDE_DRIVE_*@@</span>' : '<span class="muted">nicht gesetzt</span>')
@@ -245,28 +271,36 @@ function render() {
     .filter((c) => all || c.kind === 'app')
     .filter((c) => !f || [c.title, c.cwdShown, c.model, c.cliSessionId, c.sessionId, c.transcript && c.transcript.projectShown].some((v) => v && String(v).toLowerCase().includes(f)))
     .sort((a, b) => { const x = a[sortKey], y = b[sortKey]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (typeof x === 'string' ? x.localeCompare(y, 'de') : x - y) * sortDir; });
-  const others = data.counts.deleted + data.counts.transcript;
-  $('#count').textContent = all ? `${rows.length} angezeigt (${data.counts.app} in der App, ${others} nur Transkript)` : `${rows.length} von ${data.counts.app} Chats in der App` + (others ? `, ${others} weitere Transkripte ausgeblendet` : '');
-  $('#chats tbody').innerHTML = rows.map((c) => `<tr data-id="${esc(c.cliSessionId || c.sessionId)}" class="${selected === (c.cliSessionId || c.sessionId) ? 'sel' : ''}">
-    <td>${c.title ? esc(c.title) : `<span class="muted">${c.kind === 'deleted' ? 'in der App geloescht' : 'nur Transkript'}</span>`}${c.isArchived ? ' <span class="tag">Archiv</span>' : ''}${c.kind === 'deleted' ? ' <span class="tag">geloescht</span>' : ''}${c.sidebar && !c.transcript ? ' <span class="tag warn">kein Transkript</span>' : ''}</td>
+  $('#count').textContent = f ? `${rows.length} Treffer` : '';
+  $('#chats tbody').innerHTML = rows.length ? rows.map((c) => {
+    const tags = (c.isArchived ? '<span class="tag">archiviert</span>' : '') + (c.sidebar && !c.transcript ? '<span class="tag warn">kein Transkript</span>' : '');
+    const sub = kindLabel(c);
+    return `<tr data-id="${esc(c.cliSessionId || c.sessionId)}" class="${selected === (c.cliSessionId || c.sessionId) ? 'sel' : ''}">
+    <td>${c.title ? esc(c.title) : '<span class="muted">(ohne Titel)</span>'} ${tags}${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</td>
     <td class="mono">${esc(c.cwdShown || (c.transcript ? c.transcript.projectShown : ''))}</td>
-    <td>${esc(c.model || '')}</td><td>${esc(fmtTime(c.lastActivityAt))}</td>
-    <td class="num">${c.transcript ? fmtMB(c.transcript.size) : ''}</td><td class="num">${c.transcript ? c.transcript.chunks : ''}</td></tr>`).join('');
+    <td>${esc((c.model || '').replace(/^claude-/, ''))}</td><td>${esc(fmtTime(c.lastActivityAt))}</td>
+    <td class="num">${c.transcript ? fmtMB(c.transcript.size) + ' MB' : ''}</td></tr>`;
+  }).join('') : `<tr><td colspan="5" class="muted">${data.counts.app ? 'Keine Treffer.' : 'Keine Chats in der App in diesem Stand.'}</td></tr>`;
   document.querySelectorAll('#chats tbody tr').forEach((tr) => tr.addEventListener('click', () => { selected = tr.dataset.id; render(); renderDetail(); }));
 }
 function renderDetail() {
   const c = data.chats.find((x) => (x.cliSessionId || x.sessionId) === selected);
   if (!c) return;
   const t = c.transcript;
-  const kindText = { app: 'in der Chatliste der App', deleted: 'in der App geloescht, Transkript liegt noch vor', transcript: 'nur Transkript (aeltere oder Terminal-Sitzung)' }[c.kind] || '';
-  $('#detail').innerHTML = row('Titel', esc(c.title || '')) + row('Art', esc(kindText)) + row('Eintrag in der App', esc(c.file || 'keiner'), 'mono')
-    + row('Session-ID (App)', esc(c.sessionId || ''), 'mono') + row('Session-ID (CLI)', esc(c.cliSessionId || ''), 'mono')
-    + row('Projektordner', esc(c.cwdShown || '')) + row('  neutral', esc(c.cwd || '')) + row('Ursprung', esc(c.originCwd || ''))
-    + row('Modell', esc(c.model || '')) + row('Effort', esc(c.effort || '')) + row('Rechte-Modus', esc(c.permissionMode || '')) + row('Archiviert', c.isArchived ? 'ja' : 'nein')
-    + row('Erstellt', esc(fmtTime(c.createdAt))) + row('Zuletzt aktiv', esc(fmtTime(c.lastActivityAt))) + row('Zuletzt fokussiert', esc(fmtTime(c.lastFocusedAt)))
-    + (t ? row('Transkript', esc(t.path), 'mono') + row('  Projektschluessel', esc(t.projectShown) + ' <span class="muted">(' + esc(t.project) + ')</span>')
-         + row('  Groesse', esc(fmtMB(t.size) + ' MB, ' + t.chunks + ' Chunks')) + row('  Geaendert', esc(fmtTime(t.mtime)))
-       : row('Transkript', '<span class="muted">nicht im Snapshot</span>'));
+  const group = (name) => `<dt class="group">${esc(name)}</dt>`;
+  const opt = (label, value, cls) => (value ? row(label, esc(value), cls) : '');
+  const kindText = c.kind === 'app' ? 'in der Chatliste der App' : kindLabel(c) + ' (Transkript liegt vor)';
+  $('#detail').innerHTML = group('Chat')
+    + row('Titel', esc(c.title || '(ohne Titel)')) + row('Art', esc(kindText))
+    + opt('Erste Nachricht', c.firstPrompt && c.firstPrompt !== c.title ? c.firstPrompt : '')
+    + opt('Projektordner', c.cwdShown) + opt('Modell', c.model) + opt('Effort', c.effort) + opt('Rechte-Modus', c.permissionMode)
+    + opt('Git-Branch', c.gitBranch) + (c.isArchived ? row('Archiviert', 'ja') : '')
+    + opt('Begonnen', fmtTime(c.createdAt)) + opt('Zuletzt aktiv', fmtTime(c.lastActivityAt))
+    + group('Technik')
+    + opt('Session-ID', c.cliSessionId, 'mono') + opt('ID in der App', c.sessionId, 'mono') + opt('Eintrag in der App', c.file, 'mono')
+    + opt('Pfad neutral', c.cwd, 'mono')
+    + (t ? row('Transkript', esc(t.path), 'mono') + row('Größe', esc(fmtMB(t.size) + ' MB in ' + t.chunks + ' Chunks')) + opt('Geändert', fmtTime(t.mtime))
+       : row('Transkript', '<span class="muted">nicht im Stand enthalten</span>'));
 }
 
 // ---------- Zugang fuer PCs ----------

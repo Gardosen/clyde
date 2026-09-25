@@ -73,6 +73,21 @@ Das Plugin ruft den Befehl `clyde` auf, deshalb muss das CLI installiert sein.
 `/clyde:setup` prüft das und schlägt die Installation vor. Ist das Repository
 privat, braucht die App Git-Zugriff darauf, um den Marketplace hinzuzufügen.
 
+### Im Plugin-Verzeichnis von Anthropic
+
+Damit Clyde ohne vorheriges Hinzufügen des Marketplace unter „Customize →
+Plugins → Discover" auftaucht, muss es im Verzeichnis von Anthropic gelistet
+sein. Eingereicht wird über das Entwicklerportal unter
+https://claude.ai/directory/manage („Submit new", dann „Plugin bundle",
+Repository `Gardosen/clyde`, Plugin-Pfad `plugin`). Dafür sind ein bezahlter
+claude.ai-Plan und ein mit claude.ai verbundenes GitHub-Konto nötig; Anthropic
+prüft jede Version, bevor sie erscheint. Die Beschreibung im Verzeichnis kommt aus
+`plugin/.claude-plugin/plugin.json` und `plugin/README.md`.
+
+Bis zur Freigabe bleibt der Weg über den Marketplace `Gardosen/clyde`. Einen Skill
+über „Skills → Add → Upload" hochzuladen hilft nicht: Er erscheint nur im eigenen
+Arbeitsbereich, und die Clyde-Befehle brauchen Claude Code auf dem eigenen PC.
+
 ## Was synchronisiert wird
 
 | Bereich | Pfad (Windows) | Inhalt |

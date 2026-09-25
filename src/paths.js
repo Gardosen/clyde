@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -16,9 +17,27 @@ export function claudeHome() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 }
 
-// Sidebar-Index der Desktop-App (eine kleine JSON-Datei je Chat)
+// Die Claude-App aus dem Microsoft Store ist ein MSIX-Paket: Windows leitet ihr
+// %APPDATA%\Claude in den Paketordner um
+// (%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude). Prozesse aus der
+// App heraus sehen beide Pfade, ein normales Terminal nur den Paketordner.
+export function storeAppRoamingDirs() {
+  if (process.platform !== 'win32') return [];
+  const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  const pkgs = path.join(local, 'Packages');
+  let names = [];
+  try { names = fs.readdirSync(pkgs).filter((n) => /^Claude_[a-z0-9]+$/i.test(n)); } catch { return []; }
+  return names.map((n) => path.join(pkgs, n, 'LocalCache', 'Roaming', 'Claude')).filter((d) => fs.existsSync(d));
+}
+
+// Chatliste der Desktop-App (eine kleine JSON-Datei je Chat)
 export function desktopSessionsDir() {
   if (process.platform === 'win32') {
+    if (process.env.CLYDE_DESKTOP_SESSIONS) return process.env.CLYDE_DESKTOP_SESSIONS;
+    for (const d of storeAppRoamingDirs()) {
+      const p = path.join(d, 'claude-code-sessions');
+      if (fs.existsSync(p)) return p; // Store-App: echter Speicherort
+    }
     const appdata = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
     return path.join(appdata, 'Claude', 'claude-code-sessions');
   }

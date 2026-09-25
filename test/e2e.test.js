@@ -243,6 +243,10 @@ test('Dashboard-API liefert Chats mit Titel, Projektpfad und Transkript', async 
   assert.equal(chat.title, 't');
   assert.ok(chat.transcript, 'Chat ist mit seinem Transkript verknuepft');
   assert.equal(d.chats.find((x) => x.cliSessionId === 'weg').kind, 'deleted');
+  const fromTranscript = d.chats.find((x) => x.transcript && x.transcript.project === '@@CLYDE_DRIVE_KEY@@Aegis-episode1');
+  assert.equal(fromTranscript.cwdShown, 'D:\\Aegis\\episode1', 'Projektordner aus dem Transkript gelesen');
+  assert.equal(d.snapshot.chatListMissing, false);
+  assert.equal((await (await fetch(`${SERVER}/health`)).json()).version, JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
   assert.equal(chat.cwdShown, 'C:\\Users\\alice\\Nextcloud\\Aegis');
   assert.equal(chat.cwd, '@@CLYDE_HOME_RAW@@\\Nextcloud\\Aegis');
   assert.ok(d.chats.some((x) => !x.sidebar && x.transcript && x.transcript.projectShown === 'D--Aegis-episode1'), 'Transkript ohne Sidebar-Eintrag');

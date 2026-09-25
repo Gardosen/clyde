@@ -28,6 +28,7 @@ function hashList(body) {
   return hashes;
 }
 const summary = (m) => ({ id: m.id, createdAt: m.createdAt, host: m.host, user: m.user, platform: m.platform, stats: m.stats });
+const VERSION = (() => { try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch { return 'unbekannt'; } })();
 
 const HTML_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
@@ -99,7 +100,7 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
     const m = req.method;
     const secure = isSecure(req);
 
-    if (p === '/health' && m === 'GET') return send(res, 200, { ok: true, service: 'clyde' });
+    if (p === '/health' && m === 'GET') return send(res, 200, { ok: true, service: 'clyde', version: VERSION });
     if ((p === '/' || p === '/dashboard') && m === 'GET') {
       const html = dashboardHtml();
       res.writeHead(200, { ...HTML_HEADERS, 'content-length': html.length });
