@@ -64,14 +64,31 @@ function mergeLinks(...lists) {
   for (const list of lists) for (const ln of list || []) byPath.set(ln.p, ln);
   return [...byPath.values()];
 }
-function mergeAppGroups(a, b) {
+// Gruppen zusammenfuehren. Gleichnamige Gruppen sind dieselbe Gruppe, auch wenn ein
+// anderer PC sie mit eigener ID angelegt hat (etwa per /clyde:groups): b's
+// Zuordnungen werden auf die ID aus a umgeschrieben, damit keine Doppelten entstehen.
+export function mergeAppGroups(a, b) {
   if (!a) return b || null;
   if (!b) return a;
   const scopes = { ...a.scopes };
+  const key = (n) => String(n).trim().toLowerCase();
   for (const [s, v] of Object.entries(b.scopes || {})) {
     const cur = scopes[s] || { groups: [], assignments: {}, order: {} };
+    const idByName = new Map(cur.groups.map((g) => [key(g.name), g.id]));
     const ids = new Set(cur.groups.map((g) => g.id));
-    scopes[s] = { groups: [...cur.groups, ...(v.groups || []).filter((g) => !ids.has(g.id))], assignments: { ...cur.assignments, ...v.assignments }, order: { ...cur.order, ...v.order } };
+    const remap = new Map();
+    const added = [];
+    for (const g of v.groups || []) {
+      const same = idByName.get(key(g.name));
+      if (same) { remap.set(g.id, same); continue; }
+      if (!ids.has(g.id)) { added.push(g); ids.add(g.id); idByName.set(key(g.name), g.id); }
+    }
+    const to = (gid) => remap.get(gid) || gid;
+    const assignments = { ...cur.assignments };
+    for (const [k, gid] of Object.entries(v.assignments || {})) assignments[k] = to(gid);
+    const order = { ...cur.order };
+    for (const [gid, list] of Object.entries(v.order || {})) order[to(gid)] = list;
+    scopes[s] = { groups: [...cur.groups, ...added], assignments, order };
   }
   return { scopes, starred: [...new Set([...(a.starred || []), ...(b.starred || [])])] };
 }

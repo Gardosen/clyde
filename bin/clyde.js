@@ -5,7 +5,7 @@ import { loadConfig } from '../src/config.js';
 import { log } from '../src/log.js';
 import { push, pull } from '../src/commands.js';
 import { mergeSnapshots } from '../src/sync.js';
-import { init, map, list, status, doctor, gc, del, relocate, repos } from '../src/commands-misc.js';
+import { init, map, list, status, doctor, gc, del, relocate, repos, groups } from '../src/commands-misc.js';
 
 const HELP = `clyde - synchronisiert den Zustand der Claude-Desktop-App-Chats zwischen PCs
 
@@ -29,6 +29,7 @@ Befehle
                                     im Terminal bestaetigen oder --yes anhaengen
   map --remove N [--dry-run|--yes]  Projekt-Zuordnung entfernen, Chats zurueckstellen
   status [-v]                       Unterschiede zum letzten Snapshot, laufende Chats
+  groups [--json]                   Gruppen der Chatliste laut gemeinsamem Stand (fuer /clyde:groups)
   repos                             Git-Repos im gemeinsamen Stand und eigene Auswahl
   repos --scan                      Git-Repos in und unter den Projektordnern der Chats finden
   repos --add PFAD [PFAD ...]       Repo mitnehmen (wirkt mit dem naechsten Push)
@@ -129,7 +130,7 @@ const opts = {
   commit: expandHome(values.commit), gitPush: expandHome(values.push), message: values.message, ignore: values.ignore, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
-const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos };
+const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups };
 
 try {
   const fn = commands[cmd];

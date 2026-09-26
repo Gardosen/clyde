@@ -71,6 +71,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | `/clyde:status` | Latest snapshot, what is waiting to be pushed or pulled, busy chats |
 | `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
 | `/clyde:repos` | Choose which Git repositories every computer clones and keeps up to date |
+| `/clyde:groups` | Apply the chat list groups of the other computers in the app, without a restart (also done at the end of `/clyde:pull`) |
 
 How it behaves:
 
@@ -432,8 +433,13 @@ output names the backup folder.
   a pull.
 - **Chat list groups** (sidebar groups) are stored in the app's settings file.
   On push Clyde reads only group names and assignments from it and shows them in
-  the dashboard. They are not written into the app on the target computer,
-  because that file also holds all other app settings.
+  the dashboard. Clyde never writes that file, because it also holds all other
+  app settings. Instead, `/clyde:pull` (or `/clyde:groups` on its own) applies the
+  groups with the app's own sidebar tools, live and without a restart. Missing
+  groups are created by name, and only chats that are still ungrouped are filed.
+  Chats you grouped differently on a computer stay where they are.
+  `clyde groups` shows the grouping in the terminal. Groups with the same name
+  are treated as one group across computers.
 - Snapshots in the old v1 format are rejected by the client; push again from the
   source computer.
 - **Format v3 (0.4.2):** snapshots now escape literal placeholders. The server

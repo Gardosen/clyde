@@ -24,7 +24,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 2. **Node.js 20 or newer** on each computer.
 3. **The Clyde command-line tool** on each computer. `/clyde:setup` checks for it
    and offers to install the pinned release from GitHub:
-   `npm install -g github:Gardosen/clyde#v0.4.5`
+   `npm install -g github:Gardosen/clyde#v0.4.6`
 4. **Claude Code** – the desktop app's Code tab or the terminal. The commands run
    local programs and do not work in claude.ai chat or Cowork.
 
@@ -38,6 +38,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 | `/clyde:status` | Shows the latest snapshot, local changes and chats that are busy |
 | `/clyde:delete [id ...]` | Deletes stored snapshots on the backend after confirmation and frees the space |
 | `/clyde:repos` | Chooses which Git repositories every computer clones and keeps up to date |
+| `/clyde:groups` | Files chats into the same sidebar groups as on your other computers, using the app's sidebar tools (no restart; also part of `/clyde:pull`) |
 
 Git repositories a chat works in are taken along automatically: a pull clones
 them into a missing project folder or fast-forwards a clean clone. Local changes
@@ -70,7 +71,9 @@ Clyde is transparent about its data flow:
   fast-forwards a clean one; folders with local changes or own commits are never
   touched (`--no-repos` turns this off). Only when you choose it in
   `/clyde:push` does it commit (`git add -A`, respecting `.gitignore`) and push
-  in a repository.
+  in a repository. Sidebar groups and pins are set through the app's own
+  sidebar tools (create group, move chats, pin); the app's settings file is never
+  written.
 - **Stores** its settings and a hash cache in `~/.clyde`.
 - **Runs** the `clyde` command-line tool, which calls `git` for the repository
   steps above, and `npm install` of the pinned release when you agree to it

@@ -67,3 +67,52 @@ export function groupLookup(appGroups) {
   }
   return { byChat, ranks };
 }
+
+// Chat-IDs der Chatliste auf diesem PC (local_...), ohne Clyde-Chats; mit Titel
+export async function localSidebarChats(cfg) {
+  const root = cfg.roots['desktop-sessions'];
+  const out = new Map();
+  if (!root) return out;
+  const walk = async (dir) => {
+    let entries = [];
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { await walk(p); continue; }
+      if (!e.name.startsWith('local_') || !e.name.endsWith('.json') || pathBelongsTo(e.name, cfg.exclude || [])) continue;
+      let title = null;
+      try { title = JSON.parse(await fs.promises.readFile(p, 'utf8')).title || null; } catch { /* kein JSON */ }
+      out.set(e.name.slice(0, -5), title);
+    }
+  };
+  await walk(root.path);
+  return out;
+}
+
+// Soll-Gruppierung aus dem gemeinsamen Stand, nur fuer Chats, die es hier gibt:
+// Gruppen nach Namen (gleichnamige aus mehreren Bereichen zusammen), in
+// Seitenleisten-Reihenfolge, dazu die angehefteten Chats
+export function desiredGroups(appGroups, present) {
+  const byName = new Map();
+  const pinned = [];
+  const idOf = (k) => String(k).replace(/^code:/, '');
+  for (const s of Object.values(appGroups?.scopes || {})) {
+    const names = new Map((s.groups || []).map((g) => [g.id, String(g.name).trim()]));
+    for (const name of names.values()) if (!byName.has(name.toLowerCase())) byName.set(name.toLowerCase(), { name, sessions: [] });
+    const keys = Object.keys(s.assignments || {});
+    // Reihenfolge innerhalb der Gruppe wie in der Seitenleiste, sofern bekannt
+    const rank = new Map();
+    for (const list of Object.values(s.order || {})) list.forEach((k, i) => rank.set(idOf(k), i));
+    keys.sort((x, y) => (rank.get(idOf(x)) ?? 1e9) - (rank.get(idOf(y)) ?? 1e9));
+    for (const key of keys) {
+      if (!/^(code:)?local_/.test(key)) continue;
+      const name = names.get(s.assignments[key]);
+      const id = idOf(key);
+      if (!name || !present(id)) continue;
+      const entry = byName.get(name.toLowerCase());
+      if (![...byName.values()].some((g) => g.sessions.includes(id))) entry.sessions.push(id);
+    }
+  }
+  for (const k of appGroups?.starred || []) { const id = idOf(k); if (present(id) && !pinned.includes(id)) pinned.push(id); }
+  return { groups: [...byName.values()].filter((g) => g.sessions.length), pinned };
+}
