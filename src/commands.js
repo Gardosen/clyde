@@ -18,7 +18,8 @@ import { flatten, saveBase, loadBase, keyOf, loadBaseEntries } from './merge.js'
 import { changeMapping } from './remap.js';
 import { saveSidebarPull } from './appgroups.js';
 import { checkVersions } from './version.js';
-import { sidebarCwds, gitAvailable, clonableRoots, planRepos, describeRepoPlan, applyRepos } from './repos.js';
+import { sidebarCwds, applyRepos } from './repos.js';
+import { syncRefs, describeProblem } from './refs.js';
 import { isUnder } from './remap.js';
 
 export { MANIFEST_VERSION } from './sync.js';
@@ -89,27 +90,34 @@ export async function push(cfg, opts, log) {
   return r;
 }
 
-// Vor dem Push: Vergessenes auflisten (Git-Arbeit, die nicht auf dem Remote liegt,
-// neu gefundene Repos) und arbeitende Chats. --json fuer den Push-Skill, der daraus
-// Rueckfragen macht. Aendert nichts.
+// Vor dem Push: Vergessenes auflisten (Git-Arbeit in den Repos der Chats, die nicht
+// auf dem Remote liegt), Verweise dieses Geraets, die nicht stimmen, und arbeitende
+// Chats. --json fuer den Push-Skill, der daraus Rueckfragen macht. Aendert nichts.
 async function pushCheck(cfg, opts, log) {
-  const { precheck } = await import('./repos.js');
-  const { items } = opts.noRepos ? { items: [] } : await precheck(cfg);
+  const { workItems } = await import('./repos.js');
+  let refsRes = null;
+  if (!opts.noRepos && cfg.raw.repos !== false) refsRes = await syncRefs(cfg, new Client(cfg.server, cfg.token), { write: false }).catch(() => null);
+  const roots = [...(refsRes?.facts?.repos.values() || [])].map((r) => r.root);
+  for (const e of Object.values(refsRes?.refs?.repos || {})) {
+    const loc = e.locations?.[refsRes.device.id];
+    if (loc?.status === 'ok' && loc.path) roots.push(loc.path);
+  }
+  const items = await workItems(roots);
+  const refs = refsRes?.problems || [];
   const own = ownSession();
   const busy = own ? busyOtherSessions(own).map(describeSession) : [];
-  const result = { items, busy };
-  if (opts.json) { process.stdout.write(`${JSON.stringify(result, null, 1)}
-`); return result; }
-  if (!items.length) log.info('Nichts vergessen: alle Git-Repos, die Clyde mitnimmt, liegen vollstaendig auf ihrem Remote.');
+  const result = { items, refs, busy };
+  if (opts.json) { process.stdout.write(JSON.stringify(result, null, 1) + String.fromCharCode(10)); return result; }
+  if (!items.length && !refs.length) log.info('Nichts vergessen: die Repos der Chats liegen vollstaendig auf ihrem Remote, die Verweise dieses Geraets stimmen.');
   else log.info('Vor dem Push pruefen:');
   for (const it of items) {
-    if (it.kind === 'new') { log.info(`  Neues Git-Repo ${it.name} (${it.repo}), ${fmtBytes(it.sizeBytes)}, noch nicht ausgewaehlt`); continue; }
     const parts = [it.changed && `${it.changed} geaenderte Datei(en)`, it.untracked && `${it.untracked} neue Datei(en)`, it.ahead && `${it.ahead} Commit(s) nicht gepusht`,
       it.noUpstream && `Branch ${it.branch} hat keinen Upstream`, it.noRemote && 'kein Remote'].filter(Boolean);
     log.info(`  Git ${it.name} (${it.repo}): ${parts.join(', ')}${it.busyChats?.length ? ` - darin arbeitet gerade ${it.busyChats.join(', ')}` : ''}`);
     for (const f of it.files || []) log.info(`      ${f}`);
   }
-  if (items.length) log.info('Nachholen: clyde repos --commit PFAD [--message TEXT] | --push PFAD | --add PFAD | --ignore PFAD');
+  if (items.length) log.info('Nachholen: clyde repos --commit PFAD [--message TEXT] | clyde repos --push PFAD');
+  for (const p of refs) log.info(`  ${describeProblem(p)}`);
   if (busy.length) log.info(`Arbeiten gerade (blockieren den Push): ${busy.join(', ')}`);
   return result;
 }
@@ -159,8 +167,8 @@ export async function resolveProjects(snap, cfg, opts, log) {
   for (const canonical of Array.isArray(snap.projects) ? snap.projects : []) {
     const local = localize(canonical, cur.forms);
     if (!/@@CLYDE_/.test(local) && fs.existsSync(local)) continue;
-    // liegt in einem Git-Repo, das der Pull gleich hierher klont
-    if (!/@@CLYDE_/.test(local) && clonableRoots(opts.repos, cur.forms).some((r) => isUnder(local, r))) continue;
+    // liegt in einem Repo, nach dem gleich eigens gefragt wird (klonen / liegt hier)
+    if ((opts.repoRoots || []).some((r) => isUnder(canonical, r))) continue;
     const shown = localize(canonical, sourceForms);
     if (opts.createMissing) {
       const dir = freeDir(normalizeHome(path.join(path.resolve(opts.createMissing), lastSegment(shown))));
@@ -248,27 +256,42 @@ export async function pull(cfg, opts, log) {
   if (!snap) { log.info('Auf dem Server liegt noch kein Stand. Erst auf einem PC "clyde push" ausfuehren.'); return { changed: false }; }
   log.info(`${opts.exact ? 'Stand' : 'Gemeinsamer Stand'} ${snap.id}, zuletzt von ${snap.host} (${snap.user}), ${snap.createdAt}: ${snap.stats.files} Dateien, ${fmtBytes(snap.stats.bytes)}`);
   const chatTitles = await projectChats(client, snap).catch(() => new Map());
-  const repos = await reposToSync(snap, cfg, opts, log);
-  cfg = await resolveProjects(snap, cfg, { ...opts, chatTitles, repos }, log);
+  const refsPlan = await refsForPull(client, snap, cfg, opts, log, chatTitles.byId);
+  cfg = await resolveProjects(snap, cfg, { ...opts, chatTitles, repoRoots: refsPlan.pendingRoots }, log);
   if (snap.home !== cfg.home) log.info(`Home-Verzeichnis wird umgeschrieben: ${snap.home} -> ${cfg.home}`);
   const result = await pullFiles(client, snap, cfg, opts, log);
-  if (repos.length) result.repos = await syncRepos(repos, cfg, opts, log);
+  result.pendingRepos = refsPlan.problems;
+  if (refsPlan.supported) result.repos = await updateRepos(client, cfg, refsPlan, opts, log);
   return result;
 }
 
-// Git-Repos aus dem Stand, sofern gewuenscht und git vorhanden
-async function reposToSync(snap, cfg, opts, log) {
-  if (opts.noRepos || cfg.raw.repos === false || !snap.repos?.length) return [];
-  if (!(await gitAvailable())) { log.warn(`Der Stand kennt ${snap.repos.length} Git-Repo(s), aber git ist hier nicht installiert; sie werden nicht geklont.`); return []; }
-  return snap.repos;
+// Verweise fuer den Pull: welche Repos brauchen die Chats (auch die, die gerade
+// erst kommen), und wo liegen sie hier? Fehlende werden gemeldet; der Pull-Skill
+// fragt danach (klonen / liegt hier / ueberspringen).
+async function refsForPull(client, snap, cfg, opts, log, titles) {
+  const empty = { supported: false, problems: [], pendingRoots: [] };
+  if (opts.noRepos || cfg.raw.repos === false) return empty;
+  const ids = (snap.roots['desktop-sessions']?.files || []).map((f) => f.p.split('/').pop())
+    .filter((n) => n.startsWith('local_') && n.endsWith('.json')).map((n) => n.slice(0, -5)).filter((id) => !pathBelongsTo(id, cfg.exclude));
+  let r;
+  try { r = await syncRefs(cfg, client, { write: false, extraChatIds: ids, extraTitles: titles }); } catch (e) { log.warn(`Verweise nicht lesbar: ${e.message}`); return empty; }
+  if (r.unsupported) return empty;
+  for (const p of r.problems) log.warn(describeProblem(p));
+  return { supported: true, problems: r.problems, pendingRoots: r.problems.map((p) => r.refs.repos[p.key]?.root).filter(Boolean) };
 }
 
-// Repos klonen oder vorspulen (im Trockenlauf nur anzeigen). Vorspulen aendert
-// Projektdateien, deshalb gilt dieselbe Pruefung auf arbeitende Chats wie beim Pull.
-async function syncRepos(repos, cfg, opts, log) {
-  const actions = await planRepos(repos, cfg);
-  if (opts.dryRun) { for (const l of describeRepoPlan(actions)) log.info(l); return { planned: actions }; }
-  if (actions.some((a) => a.action === 'update')) checkGuard('Git-Repos vorspulen', opts.force, log);
+// Nach dem Pull: Verweise dieses Geraets eintragen und die Repos, die hier liegen,
+// vorspulen (nur sauber und fast-forward). Vorspulen aendert Projektdateien,
+// deshalb gilt dieselbe Pruefung auf arbeitende Chats wie beim Pull.
+async function updateRepos(client, cfg, plan, opts, log) {
+  if (opts.dryRun) return { planned: plan.problems };
+  let r;
+  try { r = await syncRefs(cfg, client); } catch (e) { log.warn(`Verweise nicht aktualisiert: ${e.message}`); return null; }
+  if (!r?.refs) return null;
+  const actions = Object.values(r.refs.repos).map((e) => ({ e, loc: e.locations?.[r.device.id] }))
+    .filter((x) => x.loc?.status === 'ok' && x.loc.path).map((x) => ({ action: 'update', local: x.loc.path, remote: x.e.remote }));
+  if (!actions.length) return { updated: [] };
+  checkGuard('Git-Repos vorspulen', opts.force, log);
   return applyRepos(actions, log);
 }
 

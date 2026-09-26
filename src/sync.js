@@ -10,8 +10,7 @@ import { pathBelongsTo } from './session.js';
 import { readAppGroups, reconcileGroups, loadGroupLinks, saveGroupLinks } from './appgroups.js';
 import { loadBase, saveBase, flatten, decide, unionLines, chunksOf, sigOf, isSidebarEntry, mergeEntry, loadBaseEntries } from './merge.js';
 import { fmtBytes } from './log.js';
-import { collectRepos, mergeRepos, reposSignature } from './repos.js';
-import { saveConfig } from './config.js';
+import { syncRefs, describeProblem } from './refs.js';
 import { checkVersions } from './version.js';
 
 // v3 (0.4.2): woertliche Platzhalter im Inhalt sind maskiert (@@CLYDE_ESC_).
@@ -197,9 +196,19 @@ export async function prepare(cfg, client, snap, log, scanOpts = {}) {
 export async function syncPush(cfg, opts, log) {
   const client = new Client(cfg.server, cfg.token);
   checkVersions(await client.health(), log);
-  // Git-Repos der Projektordner (Remote, Branch, Commit); Warnungen einmal zeigen
-  const mine = opts.noRepos ? null : await collectRepos(cfg, log);
-  for (const w of mine?.warnings || []) log.warn(w);
+  // Verweise (Repos der Chats, Orte je Geraet): eintragen, pruefen, Korrekturen
+  // sofort hochladen - unabhaengig davon, ob danach ein neuer Stand entsteht
+  let refsRes = null;
+  if (!opts.noRepos && cfg.raw?.repos !== false) {
+    try { refsRes = await syncRefs(cfg, client); } catch (e) { log.warn(`Verweise nicht aktualisiert: ${e.message}`); }
+    if (refsRes?.unsupported) log.warn('Der Server kennt noch keine Verweise (Repos je Chat). Server aktualisieren: git pull, dann docker compose up -d --build');
+    for (const w of refsRes?.work || []) {
+      const i = w.info;
+      const miss = [i.ahead && `${i.ahead} Commit(s) nicht gepusht`, i.dirty && `${i.dirty} geaenderte Datei(en) nicht committet`, i.untracked && `${i.untracked} neue Datei(en)`, i.branch && !i.upstream && `Branch ${i.branch} hat keinen Upstream`].filter(Boolean);
+      log.warn(`Git-Repo ${w.root}: ${miss.join(', ')}. Auf den anderen PCs kommt nur an, was auf dem Remote liegt.`);
+    }
+    for (const pr of refsRes?.problems || []) log.warn(describeProblem(pr));
+  }
   const forget = new Set(); // Dateien, deren gecachter Hash nicht mehr stimmt
   for (let attempt = 1; ; attempt++) {
     const snap = await fetchLatest(client);
@@ -211,13 +220,11 @@ export async function syncPush(cfg, opts, log) {
     const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r), (d) => (entries.has(d.key) ? Buffer.from(entries.get(d.key)) : null));
     const info = describe(decisions);
     const PUSH_KINDS = ['local', 'local-delete', 'union', 'conflict-local', 'conflict-keep-local'];
-    const repos = mine ? mergeRepos(snap?.repos, mine.repos, mine.drop) : (snap?.repos || []);
-    const reposChanged = reposSignature(repos) !== reposSignature(snap?.repos);
     // Gruppen: Umbenennungen und neue Gruppen von hier einbringen (loesen allein
     // einen neuen Stand aus; andere Einordnungen reisen mit dem naechsten Push mit)
     const grp = reconcileGroups(snap?.appGroups || null, readAppGroups(cfg), loadGroupLinks(cfg));
     const groupsChanged = grp.renamed.length > 0 || grp.added.length > 0;
-    const changed = !snap ? L.size > 0 || repos.length > 0 : decisions.some((d) => PUSH_KINDS.includes(d.kind)) || reposChanged || groupsChanged;
+    const changed = !snap ? L.size > 0 : decisions.some((d) => PUSH_KINDS.includes(d.kind)) || groupsChanged;
     if (snap && !changed) {
       saveBase(cfg, L, snap.id);
       saveGroupLinks(cfg, grp.links);
@@ -248,7 +255,7 @@ export async function syncPush(cfg, opts, log) {
       rootPaths: Object.fromEntries(Object.entries(cfg.roots).map(([n, r]) => [n, r.path])),
       projects: [...new Set([...(snap?.projects || []), ...(await collectProjects(cfg))])].sort(),
       appGroups: grp.appGroups,
-      repos,
+      refsRev: refsRes?.refs?.rev ?? null,
       roots,
       stats: statsOf(roots),
     };
@@ -263,8 +270,7 @@ export async function syncPush(cfg, opts, log) {
     saveBase(cfg, L, manifest.id);
     saveGroupLinks(cfg, grp.links);
     for (const r of grp.renamed) log.info(`Gruppe umbenannt: "${r.from}" -> "${r.to}" (die anderen PCs uebernehmen das mit /clyde:pull)`);
-    if (mine?.drop.length) { const raw = { ...cfg.raw }; delete raw.dropRepos; saveConfig(raw); } // abgewaehlte Repos sind raus
-    log.info(`Gemeinsamer Stand ${manifest.id} gespeichert: ${manifest.stats.files} Dateien. Von diesem PC: ${info.push} neu/geaendert, ${info.pushDelete} geloescht${info.union ? `, ${info.union} zusammengefuehrt` : ''}${repos.length ? `, ${repos.length} Git-Repo(s) vermerkt` : ''}; ${up.chunks} Chunks / ${fmtBytes(up.bytes)} uebertragen.`);
+    log.info(`Gemeinsamer Stand ${manifest.id} gespeichert: ${manifest.stats.files} Dateien. Von diesem PC: ${info.push} neu/geaendert, ${info.pushDelete} geloescht${info.union ? `, ${info.union} zusammengefuehrt` : ''}${refsRes?.facts?.repos.size ? `, Verweise auf ${refsRes.facts.repos.size} Git-Repo(s) aktuell` : ''}; ${up.chunks} Chunks / ${fmtBytes(up.bytes)} uebertragen.`);
     return { id: manifest.id, uploadedChunks: up.chunks, uploadedBytes: up.bytes, stats: manifest.stats, projects: manifest.projects, excluded: local.stats.excluded, info };
   }
 }
@@ -336,7 +342,7 @@ export async function mergeSnapshots(cfg, opts, log) {
     version: MANIFEST_VERSION, id: makeId(), createdAt: new Date().toISOString(), parent: latest?.id || null,
     host: [...new Set(snaps.map((s) => s.host))].join('+'), user: snaps[0].user, home: snaps[0].home, projectDrive: snaps[0].projectDrive || null,
     platform: snaps[0].platform, rootPaths: snaps[0].rootPaths, mergedFrom: ids,
-    projects: projects.sort(), appGroups, repos: snaps.reduce((acc, s) => mergeRepos(acc, s.repos), []), roots, stats: statsOf(roots),
+    projects: projects.sort(), appGroups, roots, stats: statsOf(roots),
   };
   if (opts.dryRun) { log.info(`Trockenlauf: fusionierter Stand haette ${manifest.stats.files} Dateien (${unions} zusammengefuehrt, ${conflicts} Konflikte nach Datum entschieden).`); return { manifest }; }
   await client.putSnapshot(manifest);
@@ -348,6 +354,7 @@ export async function mergeSnapshots(cfg, opts, log) {
 // (neutrale Pfade wie in snap.projects) -> Titel
 export async function projectChats(client, snap) {
   const out = new Map();
+  out.byId = new Map(); // Chat-ID -> Titel
   const root = snap?.roots?.['desktop-sessions'];
   if (!root) return out;
   const files = root.files.filter((f) => /(^|\/)local_[^/]*\.json$/.test(f.p) && f.s < 256 * 1024);
@@ -358,6 +365,7 @@ export async function projectChats(client, snap) {
   for (const f of files) {
     try {
       const j = JSON.parse(Buffer.concat(f.c.map((h) => data.get(h))).toString('utf8'));
+      out.byId.set(f.p.split('/').pop().slice(0, -'.json'.length), j.title || null);
       if (typeof j.cwd !== 'string') continue;
       const key = unJson(j.cwd).replace(/[\\/]+$/, '');
       if (!out.has(key)) out.set(key, []);

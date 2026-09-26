@@ -6,7 +6,7 @@ import { log } from '../src/log.js';
 import { push, pull } from '../src/commands.js';
 import { mergeSnapshots } from '../src/sync.js';
 import { update } from '../src/update.js';
-import { init, map, list, status, doctor, gc, del, relocate, repos, groups } from '../src/commands-misc.js';
+import { init, map, list, status, doctor, gc, del, relocate, repos, groups, refs } from '../src/commands-misc.js';
 
 const HELP = `clyde - synchronisiert den Zustand der Claude-Desktop-App-Chats zwischen PCs
 
@@ -17,7 +17,7 @@ Befehle
   push [--clyde-chat] [--force]     Aenderungen dieses PCs in den gemeinsamen Stand des Kontos
                                     einbringen; Chats anderer PCs bleiben erhalten
   push --check [--json]             nur pruefen, was vergessen ist (Git-Arbeit nicht auf dem
-                                    Remote, neue Repos, arbeitende Chats)
+                                    Remote, falsche Verweise, arbeitende Chats)
   pull [--dry-run] [--force]        Neue und geaenderte Chats anderer PCs holen, eigene behalten;
        [--no-ask] [--clyde-chat]    fragt nach Projektordnern, die hier fehlen
        [--create-missing DIR]       fehlende Projektordner unter DIR anlegen (z. B. auf dem Mac)
@@ -35,11 +35,13 @@ Befehle
   groups --done                     nach dem Umsetzen in der App: Zuordnung der Gruppen merken
   update [--check] [--yes] [X.Y.Z]  Plugin in der App und CLI auf die neueste Version von GitHub
                                     bringen; --check zeigt nur, was veraltet ist
-  repos                             Git-Repos im gemeinsamen Stand und eigene Auswahl
-  repos --scan                      Git-Repos in und unter den Projektordnern der Chats finden
-  repos --add PFAD [PFAD ...]       Repo mitnehmen (wirkt mit dem naechsten Push)
-  repos --remove PFAD               Repo abwaehlen (naechster Push nimmt es aus dem Stand)
-  repos --ignore PFAD [PFAD ...]    Repo nicht mehr vorschlagen
+  refs [--check] [--pending]        Verweise: Repos der Chats und wo sie auf jedem Geraet liegen;
+       [--json]                     --check prueft und laedt Korrekturen hoch, --pending nimmt die
+                                    Chats des gemeinsamen Stands dazu (vor einem Pull)
+  refs --set REPO PFAD              Repo liegt hier unter PFAD (geprueft, sofort hochgeladen)
+  refs --clone REPO [--to PFAD]     Repo hierher klonen und eintragen
+  refs --skip REPO                  Repo auf diesem Geraet nicht mehr anbieten
+  refs --link CHAT REPO             Chat von Hand einem Repo zuordnen (--unlink CHAT loest es)
   repos --commit PFAD [-m TEXT]     alles committen und auf den Remote pushen
   repos --push PFAD                 Commits auf den Remote pushen (ohne Upstream mit -u)
   list                              Staende auf dem Server mit frei werdendem Speicher
@@ -58,8 +60,8 @@ Optionen
   --dry-run      bei pull und map nur anzeigen, was passieren wuerde
   --yes          bei map und delete ohne Rueckfrage ausfuehren (fuer Plugin und Skripte)
   --rehash       bei push, pull und status den Hash-Cache ignorieren und alles neu hashen
-  --no-repos     bei push und pull Git-Repos der Projektordner nicht erfassen, klonen
-                 oder vorspulen (dauerhaft: "repos": false in ~/.clyde/config.json)
+  --no-repos     bei push und pull keine Verweise pruefen und keine Repos vorspulen
+                 (dauerhaft: "repos": false in ~/.clyde/config.json)
   --no-backup    bei pull kein Backup unter ~/.clyde/backups anlegen
   --no-ask       bei pull fehlende Projektordner nur melden, nicht nachfragen
   -v, --verbose  mehr Details
@@ -109,6 +111,12 @@ try {
       message: { type: 'string', short: 'm' },
       ignore: { type: 'boolean', default: false },
       done: { type: 'boolean', default: false },
+      set: { type: 'boolean', default: false },
+      clone: { type: 'boolean', default: false },
+      skip: { type: 'boolean', default: false },
+      link: { type: 'boolean', default: false },
+      unlink: { type: 'boolean', default: false },
+      pending: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -133,10 +141,11 @@ const opts = {
   plan: expandHome(values.plan), chat: values.chat, to: expandHome(values.to), undo: expandHome(values.undo),
   exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
   force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, noRepos: values['no-repos'], scan: values.scan, check: values.check, json: values.json,
-  commit: expandHome(values.commit), gitPush: expandHome(values.push), message: values.message, ignore: values.ignore, done: values.done, verbose: values.verbose,
+  commit: expandHome(values.commit), gitPush: expandHome(values.push), message: values.message, ignore: values.ignore, done: values.done,
+  set: values.set, clone: values.clone, skip: values.skip, link: values.link, unlink: values.unlink, pending: values.pending, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
-const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups, update };
+const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups, update, refs };
 
 try {
   const fn = commands[cmd];

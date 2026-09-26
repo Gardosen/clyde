@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allForms, localize } from '../src/rewrite.js';
 import { groupLookup } from '../src/appgroups.js';
+import { chatPlaces } from '../src/places.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,7 +65,8 @@ async function transcriptInfo(store, f) {
   return info;
 }
 
-export async function chatsForSnapshot(store, man) {
+// refs: Verweise des Benutzers (wo die Chats auf welchem Geraet ihr Wissen haben)
+export async function chatsForSnapshot(store, man, refs = null) {
   // Platzhalter so darstellen, wie die Pfade auf dem Quell-PC aussahen
   const forms = allForms(man.home, man.projectDrive, {});
   const shown = (s) => (typeof s === 'string' ? localize(s, forms) : s);
@@ -122,6 +124,7 @@ export async function chatsForSnapshot(store, man) {
       isArchived: !!j.isArchived,
       createdAt: toMs(j.createdAt), lastActivityAt: toMs(j.lastActivityAt), lastFocusedAt: toMs(j.lastFocusedAt),
       appGroup: (typeof j.sessionId === 'string' && groups.byChat.get(j.sessionId)) || null,
+      places: refs && typeof j.sessionId === 'string' ? chatPlaces(refs, j.sessionId, unJson(j.cwd || null)) : [],
       transcript: linked || null,
     });
   }

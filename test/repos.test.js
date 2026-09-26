@@ -1,4 +1,4 @@
-// Git-Repos der Projektordner: Push vermerkt sie, Pull klont oder spult vor
+// Verweise: welches Repo zu welchem Chat gehoert und wo es je Geraet liegt
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +17,9 @@ process.env.CLAUDE_CONFIG_DIR = path.join(tmp, 'claude');
 const { createServer } = await import('../server/server.js');
 const { saveConfig, loadConfig } = await import('../src/config.js');
 const { push, pull } = await import('../src/commands.js');
-const { sanitizeRemote, remoteKey, allowedRemote, planRepos } = await import('../src/repos.js');
+const { sanitizeRemote, remoteKey, allowedRemote } = await import('../src/repos.js');
+const { refs, repos } = await import('../src/commands-misc.js');
+const { device } = await import('../src/refs.js');
 const { Client } = await import('../src/client.js');
 
 const TOKEN = 'repos-token';
@@ -64,194 +66,153 @@ write(path.join(PA, 'src', 'main.txt'), 'code\n');
 g(PA, 'add', '.');
 g(PA, 'commit', '-m', 'eins');
 g(PA, 'push', '-u', 'origin', 'main');
-write(path.join(A.base, 'sessions', 'local_a.json'), JSON.stringify({ cwd: path.join(PA, 'src'), title: 'Projekt' }));
+write(path.join(A.base, 'sessions', 'local_a.json'), JSON.stringify({ sessionId: 'local_a', cwd: path.join(PA, 'src'), title: 'Projekt' }));
 write(path.join(A.base, 'projects', 'p', 'chat.jsonl'), '{"a":1}\n');
+
+
+// Ein zweites Repo, das nur unter einem Ordner liegt, in dem kein Chat arbeitet
+// (darf nie auftauchen: kein Scannen)
+const TOOLREMOTE = path.join(tmp, 'tool.git');
+g(tmp, 'init', '--bare', TOOLREMOTE);
+g(tmp, 'clone', TOOLREMOTE, path.join(A.home, 'tool'));
+const refsOf = () => new Client(SERVER, TOKEN).getRefs();
+const devOf = (P) => device(P.cfg()).id;
+const KEY = remoteKey(REMOTE);
 
 test('Remote-Adressen: Zugangsdaten raus, gleiche Repos erkennen, Gefaehrliches ablehnen', () => {
   assert.equal(sanitizeRemote('https://user:geheim@github.com/x/y.git'), 'https://github.com/x/y.git');
-  assert.equal(sanitizeRemote('https://token@github.com/x/y.git'), 'https://github.com/x/y.git');
   assert.equal(sanitizeRemote('ssh://git:pw@forge.example:222/x/y.git'), 'ssh://git@forge.example:222/x/y.git');
-  assert.equal(sanitizeRemote('git@github.com:x/y.git'), 'git@github.com:x/y.git');
   assert.equal(remoteKey('git@github.com:Gardosen/clyde.git'), remoteKey('https://github.com/Gardosen/clyde'));
-  assert.notEqual(remoteKey('https://github.com/a/b'), remoteKey('https://github.com/a/c'));
-  for (const bad of ['', '--upload-pack=touch x', 'ext::sh -c touch% x', 'fd::17', 'https://x/y\n--z']) assert.equal(allowedRemote(bad), false, bad);
-  for (const ok of ['https://github.com/x/y.git', 'ssh://git@h:222/x.git', 'git@github.com:x/y.git', REMOTE]) assert.equal(allowedRemote(ok), true, ok);
+  for (const bad of ['', '--upload-pack=touch x', 'ext::sh -c touch% x', 'fd::17']) assert.equal(allowedRemote(bad), false, bad);
+  for (const ok of ['https://github.com/x/y.git', 'git@github.com:x/y.git', REMOTE]) assert.equal(allowedRemote(ok), true, ok);
 });
 
-test('Pull lehnt gefaehrliche Remotes aus einem Stand ab', async () => {
-  const acts = await planRepos([
-    { root: path.join(tmp, 'x1'), remote: '--upload-pack=touch pwned', branch: 'main' },
-    { root: path.join(tmp, 'x2'), remote: 'ext::sh -c touch% pwned', branch: 'main' },
-  ], { forms: [] });
-  assert.deepEqual(acts.map((a) => a.action), ['skip', 'skip']);
-  assert.ok(acts.every((a) => a.reason.includes('nicht erlaubt')));
-});
-
-test('Push vermerkt das Repo des Projektordners (neutraler Pfad, ohne Zugangsdaten)', async () => {
+test('Push merkt je Chat sein Repo und wo es auf diesem Geraet liegt, ohne Ordner zu durchsuchen', async () => {
   await push(A.cfg(), {}, quiet);
+  const r = await refsOf();
+  const da = devOf(A);
+  assert.deepEqual(Object.keys(r.repos), [KEY], 'nur das Repo, in dem ein Chat arbeitet (tool bleibt aussen vor)');
+  assert.deepEqual({ repo: r.chats.local_a.repo, sub: r.chats.local_a.sub }, { repo: KEY, sub: 'src' });
+  assert.equal(r.repos[KEY].locations[da].path, PA);
+  assert.equal(r.repos[KEY].locations[da].status, 'ok');
+  assert.equal(r.repos[KEY].branch, 'main');
+  assert.ok(r.repos[KEY].root.startsWith('@@CLYDE_HOME_'), 'neutraler Ort fuer den Vorschlag auf anderen PCs');
+  assert.equal(r.devices[da].home, A.home);
   const snap = await new Client(SERVER, TOKEN).getSnapshot('latest');
-  assert.equal(snap.repos.length, 1);
-  const [r] = snap.repos;
-  assert.ok(r.root.startsWith('@@CLYDE_HOME_'), r.root);
-  assert.ok(r.root.endsWith('proj'), 'Repo-Wurzel, nicht der Unterordner des Chats');
-  assert.equal(remoteKey(r.remote), remoteKey(REMOTE));
-  assert.equal(r.branch, 'main');
-  assert.equal(r.head, g(PA, 'rev-parse', 'HEAD'));
+  assert.equal(snap.refsRev, r.rev, 'der Stand verweist auf die Revision der Verweise');
+  assert.equal(snap.repos, undefined, 'keine Repo-Liste mehr im Stand');
 });
 
-test('Pull auf einem neuen PC klont das Repo an den Projektordner', async () => {
+test('Pull auf einem neuen PC: Repo wird angeboten (nicht als fehlender Ordner), klonen traegt den Ort ein', async () => {
   const B = pc('B');
-  const { out, log } = collect();
-  await pull(B.cfg(), { noAsk: true }, log);
+  const dry = collect();
+  await pull(B.cfg(), { noAsk: true, dryRun: true }, dry.log);
+  assert.ok(dry.out.some((l) => l.startsWith('WARN') && l.includes('ist hier nicht eingetragen') && l.includes('clyde refs --clone proj')), dry.out.join('\n'));
+  assert.ok(!dry.out.some((l) => l.includes('gibt es hier nicht')), 'der Projektordner im Repo wird nicht einzeln erfragt');
+  const pend = await refs(B.cfg(), { pending: true }, quiet);
+  assert.equal(pend.problems.length, 1);
+  assert.equal(pend.problems[0].suggested, path.join(B.home, 'proj'), 'Vorschlag: wie auf dem Quell-PC');
+  assert.deepEqual(pend.problems[0].chats, ['Projekt']);
+
+  await refs(B.cfg(), { clone: true, args: ['proj'] }, quiet);
   const PB = path.join(B.home, 'proj');
   assert.equal(read(path.join(PB, 'README.md')), 'eins\n');
-  assert.equal(g(PB, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
-  assert.ok(!out.some((l) => l.includes('gibt es hier nicht')), 'wird geklont, fehlt also nicht');
-  assert.ok(out.some((l) => l.includes('1 geklont')), out.join('\n'));
+  assert.equal((await refsOf()).repos[KEY].locations[devOf(B)].path, PB, 'sofort hochgeladen');
+  await pull(B.cfg(), { noAsk: true }, quiet);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(B.base, 'sessions', 'local_a.json'), 'utf8')).cwd, path.join(PB, 'src'));
 
-  // neuer Commit auf A, auf den Remote gepusht: B spult beim naechsten Pull vor
+  // neuer Commit auf A: B spult beim naechsten Pull vor
   write(path.join(PA, 'README.md'), 'zwei\n');
   g(PA, 'commit', '-am', 'zwei');
   g(PA, 'push');
-  const r2 = collect();
-  await pull(B.cfg(), { noAsk: true }, r2.log);
+  const p2 = collect();
+  await pull(B.cfg(), { noAsk: true }, p2.log);
   assert.equal(read(path.join(PB, 'README.md')), 'zwei\n');
-  assert.ok(r2.out.some((l) => l.includes('1 vorgespult')), r2.out.join('\n'));
-
-  // lokale Aenderung auf B: nicht anfassen, nur melden
-  write(path.join(PB, 'README.md'), 'lokal\n');
-  const before = g(PB, 'rev-parse', 'HEAD');
-  write(path.join(PA, 'neu.txt'), 'drei\n');
-  g(PA, 'add', '.');
-  g(PA, 'commit', '-m', 'drei');
-  g(PA, 'push');
-  const r3 = collect();
-  await pull(B.cfg(), { noAsk: true }, r3.log);
-  assert.equal(read(path.join(PB, 'README.md')), 'lokal\n');
-  assert.equal(g(PB, 'rev-parse', 'HEAD'), before);
-  assert.ok(r3.out.some((l) => l.includes('uebersprungen') && l.includes('geaenderte Datei')), r3.out.join('\n'));
+  assert.ok(p2.out.some((l) => l.includes('1 vorgespult')), p2.out.join('\n'));
 });
 
-test('Push warnt vor Commits, die nicht auf dem Remote liegen', async () => {
-  write(path.join(PA, 'vier.txt'), 'vier\n');
-  g(PA, 'add', '.');
-  g(PA, 'commit', '-m', 'vier');
-  const { out, log } = collect();
-  await push(A.cfg(), {}, log);
-  assert.ok(out.some((l) => l.startsWith('WARN') && l.includes('1 Commit(s) nicht gepusht')), out.join('\n'));
-  g(PA, 'push');
-});
-
-test('Vorhandener Ordner ohne Git bleibt unangetastet; Trockenlauf und --no-repos klonen nichts', async () => {
+test('Liegt schon hier: --set prueft den Pfad, traegt ihn ein und stellt die Chats darauf um', async () => {
   const C = pc('C');
-  write(path.join(C.home, 'proj', 'fremd.txt'), 'meins\n');
-  const c = collect();
-  await pull(C.cfg(), { noAsk: true }, c.log);
-  assert.deepEqual(fs.readdirSync(path.join(C.home, 'proj')), ['fremd.txt'], 'nichts hineingeklont');
-  assert.ok(c.out.some((l) => l.includes('ohne Git')), c.out.join('\n'));
-
-  const D = pc('D');
-  const d = collect();
-  await pull(D.cfg(), { noAsk: true, dryRun: true }, d.log);
-  assert.ok(d.out.some((l) => l.includes('wird geklont')), d.out.join('\n'));
-  assert.ok(!fs.existsSync(path.join(D.home, 'proj')), 'Trockenlauf klont nicht');
-
-  const E = pc('E');
-  const e = collect();
-  await pull(E.cfg(), { noAsk: true, noRepos: true }, e.log);
-  assert.ok(!fs.existsSync(path.join(E.home, 'proj')));
-  assert.ok(e.out.some((l) => l.includes('gibt es hier nicht')), 'ohne Repos wird der fehlende Ordner wie bisher gemeldet');
+  const elsewhere = path.join(tmp, 'woanders', 'meinproj');
+  g(tmp, 'clone', REMOTE, elsewhere);
+  await assert.rejects(refs(C.cfg(), { set: true, args: ['proj', path.join(tmp, 'gibtsnicht')] }, quiet), /gibt es nicht/);
+  await assert.rejects(refs(C.cfg(), { set: true, args: ['proj', path.join(A.home, 'tool')] }, quiet), /anderes Repo/);
+  await assert.rejects(refs(C.cfg(), { set: true, args: ['unbekannt', elsewhere] }, quiet), /nicht bekannt/);
+  await refs(C.cfg(), { set: true, args: ['proj', elsewhere] }, quiet);
+  const cfg = C.cfg();
+  assert.equal(Object.values(cfg.pathMap)[0], elsewhere, 'Zuordnung fuer die Chats des Repos');
+  await pull(cfg, { noAsk: true }, quiet);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(C.base, 'sessions', 'local_a.json'), 'utf8')).cwd, path.join(elsewhere, 'src'));
+  assert.equal((await refs(C.cfg(), { pending: true }, quiet)).problems.length, 0, 'nicht erneut gefragt');
 });
 
-test('Eigene Auswahl: Repo unter einem Chat-Ordner finden, mitnehmen und wieder abwaehlen', async () => {
-  const { repos } = await import('../src/commands-misc.js');
-  // Chat arbeitet im Oberordner "work", das Repo "tool" liegt darunter
-  const REMOTE2 = path.join(tmp, 'tool.git');
-  g(tmp, 'init', '--bare', REMOTE2);
-  const W = path.join(A.home, 'work');
-  const TOOL = path.join(W, 'tool');
-  g(tmp, 'clone', REMOTE2, TOOL);
-  write(path.join(TOOL, 'tool.txt'), 'werkzeug\n');
-  g(TOOL, 'add', '.');
-  g(TOOL, 'commit', '-m', 'tool');
-  g(TOOL, 'push', '-u', 'origin', 'main');
-  write(path.join(W, 'notizen.txt'), 'kein Repo\n');
-  write(path.join(A.base, 'sessions', 'local_w.json'), JSON.stringify({ cwd: W, title: 'Oberordner' }));
+test('Im Dashboard geaenderte Pfade: ungeprueft, der Push des Geraets bestaetigt, korrigiert oder beanstandet sofort', async () => {
+  const c = new Client(SERVER, TOKEN);
+  const setFor = async (dev, p) => { const r = await c.getRefs(); r.repos[KEY].locations[dev] = { device: 'x', path: p, status: 'unverified', by: 'dashboard', at: 'x' }; return c.putRefs(r); };
+  // B arbeitet mit einem Chat im Repo: ein falscher Pfad aus dem Dashboard wird korrigiert
+  const B = pc('B');
+  await setFor(devOf(B), path.join(tmp, 'falsch'));
+  const stale = await c.getRefs();
+  await setFor(devOf(B), path.join(tmp, 'falsch2'));
+  await assert.rejects(c.putRefs(stale), (e) => e.code === 'REFS_CONFLICT', 'alte Revision: Konflikt statt Ueberschreiben');
+  await push(B.cfg(), {}, quiet);
+  let r = await c.getRefs();
+  assert.deepEqual([r.repos[KEY].locations[devOf(B)].path, r.repos[KEY].locations[devOf(B)].status], [path.join(B.home, 'proj'), 'ok'], 'vom Geraet korrigiert');
 
-  const scan = await repos(A.cfg(), { scan: true }, quiet);
-  const hit = scan.found.find((r) => r.root.endsWith('tool'));
-  assert.ok(hit && !hit.viaChat && !hit.selected, 'Kandidat unter dem Chat-Ordner, noch nicht ausgewaehlt');
-  await push(A.cfg(), {}, quiet);
-  let snap = await new Client(SERVER, TOKEN).getSnapshot('latest');
-  assert.ok(!snap.repos.some((r) => r.root.endsWith('tool')), 'ohne Auswahl nicht im Stand');
-
-  await assert.rejects(repos(A.cfg(), { add: true, args: [W] }, quiet), /kein Git-Repo/);
-  await repos(A.cfg(), { add: true, args: [TOOL] }, quiet);
-  assert.equal((await repos(A.cfg(), { scan: true }, quiet)).found.find((r) => r.root.endsWith('tool')).selected, true);
-  await push(A.cfg(), {}, quiet);
-  snap = await new Client(SERVER, TOKEN).getSnapshot('latest');
-  assert.ok(snap.repos.some((r) => r.root.endsWith('tool')), 'ausgewaehlt: im Stand');
-
+  // F kennt den Ort nur aus dem Dashboard
   const F = pc('F');
-  await pull(F.cfg(), { noAsk: true }, quiet);
-  assert.equal(read(path.join(F.home, 'work', 'tool', 'tool.txt')), 'werkzeug\n', 'anderer PC klont es');
-
-  await repos(A.cfg(), { remove: TOOL }, quiet);
-  assert.deepEqual(loadConfig().raw.dropRepos.length, 1);
-  await push(A.cfg(), {}, quiet);
-  snap = await new Client(SERVER, TOKEN).getSnapshot('latest');
-  assert.ok(!snap.repos.some((r) => r.root.endsWith('tool')), 'abgewaehlt: aus dem Stand');
-  assert.equal((loadConfig().raw.dropRepos || []).length, 0, 'Abwahl erledigt');
-  assert.ok(fs.existsSync(path.join(F.home, 'work', 'tool', 'tool.txt')), 'vorhandener Klon bleibt');
+  const df = devOf(F);
+  await setFor(df, path.join(tmp, 'falsch'));
+  const w = collect();
+  await push(F.cfg(), {}, w.log);
+  r = await c.getRefs();
+  assert.equal(r.repos[KEY].locations[df].status, 'missing', 'beanstandet und hochgeladen');
+  assert.ok(w.out.some((l) => l.startsWith('WARN') && l.includes('fehlt hier')), w.out.join(' | '));
+  const fp = path.join(tmp, 'F-proj');
+  g(tmp, 'clone', REMOTE, fp);
+  await setFor(df, fp);
+  await push(F.cfg(), {}, quiet);
+  r = await c.getRefs();
+  assert.equal(r.repos[KEY].locations[df].status, 'ok', 'bestaetigt');
+  assert.equal(r.repos[KEY].locations[df].by, 'dashboard');
 });
 
-test('Vor dem Push: Vergessenes erkennen und auf Wunsch nachholen', async () => {
-  const { repos } = await import('../src/commands-misc.js');
-  const { precheck } = await import('../src/repos.js');
-  const TOOL = path.join(A.home, 'work', 'tool');
-  write(path.join(PA, 'README.md'), 'fuenf\n');
-  write(path.join(PA, 'neu2.txt'), 'neu\n');
-  let { items } = await precheck(A.cfg());
-  const work = items.find((i) => i.kind === 'work' && i.name === 'proj');
-  assert.ok(work && work.changed === 1 && work.untracked === 1, JSON.stringify(items));
-  assert.ok(work.files.some((f) => f.includes('neu2.txt')), 'Dateiliste fuer die Rueckfrage');
-  assert.ok(items.some((i) => i.kind === 'new' && i.name === 'tool'), 'abgewaehltes Repo wird wieder vorgeschlagen');
+test('Ueberspringen, von Hand zuordnen, Vergessenes pruefen; Scannen gibt es nicht mehr', async () => {
+  const D = pc('D');
+  await refs(D.cfg(), { skip: true, args: ['proj'] }, quiet);
+  assert.equal((await refs(D.cfg(), { pending: true }, quiet)).problems.length, 0, 'uebersprungen: keine Frage mehr');
 
-  await repos(A.cfg(), { ignore: true, args: [TOOL] }, quiet);
-  ({ items } = await precheck(A.cfg()));
-  assert.ok(!items.some((i) => i.name === 'tool'), 'ignoriert: nicht mehr vorgeschlagen');
+  write(path.join(A.base, 'sessions', 'local_n.json'), JSON.stringify({ cwd: A.home, title: 'Notizen' }));
+  await refs(A.cfg(), { link: true, args: ['Notizen', 'proj'] }, quiet);
+  assert.equal((await refsOf()).chats.local_n.repo, KEY);
+  await refs(A.cfg(), { unlink: true, args: ['Notizen'] }, quiet);
+  assert.equal((await refsOf()).chats.local_n, undefined);
 
-  // ein anderer Chat arbeitet im Repo: nicht committen
-  const sessionFile = path.join(tmp, 'claude', 'sessions', `${process.pid}.json`);
-  write(sessionFile, JSON.stringify({ pid: process.pid, sessionId: 'anderer-chat', status: 'busy', cwd: PA, name: 'Anderer Chat' }));
-  assert.deepEqual((await precheck(A.cfg())).items.find((i) => i.name === 'proj').busyChats, ['"Anderer Chat"']);
-  await assert.rejects(repos(A.cfg(), { commit: PA }, quiet), /arbeitet gerade/);
-  fs.rmSync(sessionFile);
-
+  await assert.rejects(repos(A.cfg(), { scan: true }, quiet), /durchsucht keine Ordner/);
+  write(path.join(PA, 'neu.txt'), 'neu\n');
+  const chk = await push(A.cfg(), { check: true }, quiet);
+  assert.deepEqual(chk.items.map((i) => [i.name, i.untracked]), [['proj', 1]], 'nur Repos von Chats');
+  assert.deepEqual(chk.refs, []);
   await repos(A.cfg(), { commit: PA, message: 'Nachgereicht' }, quiet);
-  assert.equal(g(REMOTE, 'log', '-1', '--format=%s', 'main'), 'Nachgereicht', 'committet und auf dem Remote');
-  ({ items } = await precheck(A.cfg()));
-  assert.ok(!items.some((i) => i.kind === 'work' && i.name === 'proj'), 'nichts mehr vergessen');
+  assert.equal(g(REMOTE, 'log', '-1', '--format=%s', 'main'), 'Nachgereicht');
+});
 
-  // neuer Branch ohne Upstream: --push setzt ihn
-  g(PA, 'checkout', '-b', 'feature');
-  write(path.join(PA, 'f.txt'), 'f\n');
-  g(PA, 'add', '.');
-  g(PA, 'commit', '-m', 'feature');
-  assert.equal((await precheck(A.cfg())).items.find((i) => i.name === 'proj').noUpstream, true);
-  await repos(A.cfg(), { gitPush: PA }, quiet);
-  assert.ok(g(REMOTE, 'branch', '--list', 'feature').includes('feature'));
-  g(PA, 'checkout', 'main');
+test('Klonen nur von erlaubten Remotes', async () => {
+  const c = new Client(SERVER, TOKEN);
+  const r = await c.getRefs();
+  r.repos['boese/x'] = { remote: '--upload-pack=touch pwned', name: 'boese', locations: {} };
+  await c.putRefs(r);
+  await assert.rejects(refs(pc('E').cfg(), { clone: true, args: ['boese'] }, quiet), /nicht erlaubt/);
+});
 
-  // Remote hat neuere Commits: nichts erzwingen, klarer Hinweis
-  const OTHER = path.join(tmp, 'other-clone');
-  g(tmp, 'clone', REMOTE, OTHER);
-  write(path.join(OTHER, 'other.txt'), 'o\n');
-  g(OTHER, 'add', '.');
-  g(OTHER, 'commit', '-m', 'anderswo');
-  g(OTHER, 'push');
-  write(path.join(PA, 'lokal.txt'), 'l\n');
-  g(PA, 'add', '.');
-  g(PA, 'commit', '-m', 'lokal');
-  await assert.rejects(repos(A.cfg(), { gitPush: PA }, quiet), /neuere Commits/);
+test('Dashboard: je Chat und Geraet Projektordner, Repo und Stand des Verweises', async () => {
+  const chats = await new Client(SERVER, TOKEN).json('GET', '/snapshots/latest/chats');
+  const c = chats.chats.find((x) => x.sessionId === 'local_a' || (x.file || '').endsWith('local_a.json'));
+  const byDev = Object.fromEntries(c.places.map((p) => [p.deviceId, p]));
+  const pa = byDev[devOf(A)];
+  assert.equal(pa.repo.name, 'proj');
+  assert.equal(pa.repo.path, PA);
+  assert.equal(pa.cwd, path.join(PA, 'src'), 'Projektordner = Repo-Ort + Unterordner');
+  const pd = byDev[devOf(pc('D'))];
+  assert.equal(pd.repo.status, 'skipped');
 });

@@ -86,6 +86,7 @@
     <button data-tab="chats" class="on">Chats</button>
     <button data-tab="access">Zugang fuer PCs</button>
     <button data-tab="snaps">Stände</button>
+    <button data-tab="refs">Verweise</button>
     <button data-tab="account">Konto</button>
     <button data-tab="users" data-admin hidden>Benutzer</button>
   </nav>
@@ -143,6 +144,20 @@
         <button id="copyCmd" type="button">Befehl kopieren</button>
       </div>
       <div id="tokenMsg" class="msg"></div>
+    </section>
+  </section>
+
+  <section data-view="refs" hidden class="stack" style="max-width:1100px">
+    <section class="card">
+      <h2>Repos der Chats und wo sie liegen</h2>
+      <p class="muted" style="margin-top:0">Clyde merkt sich, in welchem Git-Repo ein Chat arbeitet, und auf jedem Gerät, wo dieses Repo liegt. Hier lassen sich die Pfade fein justieren. Ein hier geänderter Pfad gilt als „ungeprüft“, bis das Gerät ihn beim nächsten Push bestätigt oder beanstandet. Ein leerer Pfad entfernt den Eintrag für das Gerät.</p>
+      <div id="refsTable"></div>
+      <div id="refsMsg" class="msg"></div>
+    </section>
+    <section class="card">
+      <h2>Chats ohne eigenes Repo</h2>
+      <p class="muted" style="margin-top:0">Arbeitet ein Chat in einem Ordner, der kein Git-Repo ist, lässt er sich hier einem Repo zuordnen.</p>
+      <div id="refsChats"></div>
     </section>
   </section>
 
@@ -242,6 +257,7 @@ function showTab(name) {
   if (name === 'access') loadTokens();
   if (name === 'users') loadUsers();
   if (name === 'snaps') loadSnaps();
+  if (name === 'refs') loadRefs();
 }
 document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
 
@@ -388,11 +404,80 @@ function renderDetail() {
     + opt('Projektordner', c.cwdShown) + opt('Modell', c.model) + opt('Effort', c.effort) + opt('Rechte-Modus', c.permissionMode)
     + opt('Git-Branch', c.gitBranch) + (c.isArchived ? row('Archiviert', 'ja') : '')
     + opt('Begonnen', fmtTime(c.createdAt)) + opt('Zuletzt aktiv', fmtTime(c.lastActivityAt))
+    + ((c.places || []).length ? group('Auf den Geräten') + c.places.map((p) => row(p.device,
+        esc('Ordner: ' + (p.cwd || 'unbekannt'))
+        + '<br>' + (p.repo ? esc('Repo ' + p.repo.name + ': ' + (p.repo.path || '–')) + ' <span class="tag">' + esc(refStatus(p.repo.status)) + '</span>' : '<span class="muted">kein Repo zugeordnet</span>')
+        + (p.memory ? '<br>' + esc('Memory → ' + p.memory) : ''))).join('') : '')
     + group('Technik')
     + opt('Session-ID', c.cliSessionId, 'mono') + opt('ID in der App', c.sessionId, 'mono') + opt('Eintrag in der App', c.file, 'mono')
     + opt('Pfad neutral', c.cwd, 'mono')
     + (t ? row('Transkript', esc(t.path), 'mono') + row('Größe', esc(fmtMB(t.size) + ' MB in ' + t.chunks + ' Chunks')) + opt('Geändert', fmtTime(t.mtime))
        : row('Transkript', '<span class="muted">nicht im Stand enthalten</span>'));
+}
+
+// ---------- Verweise ----------
+const REF_STATUS = { ok: 'geprüft', unverified: 'ungeprüft', missing: 'fehlt', 'not-a-repo': 'kein Git-Repo', 'wrong-remote': 'anderer Remote', skipped: 'übersprungen', fehlt: 'nicht eingetragen' };
+const refStatus = (s) => REF_STATUS[s] || s;
+let refsDoc = null;
+async function loadRefs() {
+  say($('#refsMsg'), '');
+  try {
+    refsDoc = await api('GET', q('/refs'));
+    if (!data) { try { data = await api('GET', q('/snapshots/latest/chats')); } catch { /* noch kein Stand */ } }
+    renderRefs();
+  } catch (e) { say($('#refsMsg'), e.message); }
+}
+const refsReadOnly = () => viewUser && viewUser !== me.user;
+const chatTitle = (id) => { const c = data && data.chats && data.chats.find((x) => x.sessionId === id); return c ? (c.title || id) : id; };
+function renderRefs() {
+  const devs = Object.entries(refsDoc.devices || {});
+  const repos = Object.entries(refsDoc.repos || {}).sort((a, b) => (a[1].name || a[0]).localeCompare(b[1].name || b[0]));
+  const ro = refsReadOnly();
+  $('#refsTable').innerHTML = !repos.length
+    ? '<p class="muted">Noch keine Verweise. Sie entstehen beim nächsten Push eines Geräts, auf dem ein Chat in einem Git-Repo arbeitet.</p>'
+    : '<table><thead><tr><th>Repo</th><th>Chats</th>' + devs.map(([, d]) => '<th>' + esc(d.name) + '</th>').join('') + '</tr></thead><tbody>'
+      + repos.map(([key, e]) => '<tr><td><b>' + esc(e.name || key) + '</b><br><span class="muted mono">' + esc(e.remote || key) + '</span></td>'
+        + '<td>' + esc(Object.entries(refsDoc.chats || {}).filter(([, c]) => c.repo === key).map(([id]) => chatTitle(id)).join(' | ') || '–') + '</td>'
+        + devs.map(([devId]) => {
+          const l = (e.locations || {})[devId];
+          return '<td><input class="mono" style="width:100%" data-ref-key="' + esc(key) + '" data-ref-dev="' + esc(devId) + '" value="' + esc((l && l.path) || '') + '"' + (ro ? ' disabled' : '') + '>'
+            + '<br><span class="tag">' + esc(refStatus(l ? l.status : 'fehlt')) + '</span>' + (l && l.by === 'dashboard' ? ' <span class="muted">aus dem Dashboard</span>' : '') + '</td>';
+        }).join('') + '</tr>').join('') + '</tbody></table>';
+  document.querySelectorAll('[data-ref-key]').forEach((inp) => inp.addEventListener('change', () => saveRefPath(inp.dataset.refKey, inp.dataset.refDev, inp.value.trim())));
+  const chats = ((data && data.chats) || []).filter((c) => c.sessionId && c.sidebar);
+  const options = (sel) => '<option value="">– keins –</option>' + repos.map(([key, e]) => '<option value="' + esc(key) + '"' + (sel === key ? ' selected' : '') + '>' + esc(e.name || key) + '</option>').join('');
+  $('#refsChats').innerHTML = !chats.length ? '<p class="muted">Keine Chats im gewählten Stand.</p>'
+    : '<table><thead><tr><th>Chat</th><th>Repo</th><th>Zugeordnet von</th></tr></thead><tbody>' + chats.map((c) => {
+      const l = (refsDoc.chats || {})[c.sessionId];
+      return '<tr><td>' + esc(c.title || c.sessionId) + '</td><td><select data-ref-chat="' + esc(c.sessionId) + '"' + (ro ? ' disabled' : '') + '>' + options(l && l.repo) + '</select></td>'
+        + '<td class="muted">' + esc(l ? (l.by === 'dashboard' ? 'Dashboard' : 'Gerät (Arbeitsordner)') : '–') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+  document.querySelectorAll('[data-ref-chat]').forEach((s) => s.addEventListener('change', () => saveRefChat(s.dataset.refChat, s.value)));
+}
+async function putRefs(mutate, okText) {
+  const doc = JSON.parse(JSON.stringify(refsDoc));
+  mutate(doc);
+  try { refsDoc = await api('PUT', '/refs', doc); renderRefs(); say($('#refsMsg'), okText, 'ok'); }
+  catch (e) {
+    await loadRefs();
+    say($('#refsMsg'), /geaendert/.test(e.message) ? 'Die Verweise wurden inzwischen geändert (etwa von einem Gerät). Neu geladen, bitte die Änderung wiederholen.' : e.message);
+  }
+}
+function saveRefPath(key, devId, p) {
+  const devName = (refsDoc.devices[devId] || {}).name || devId;
+  putRefs((doc) => {
+    const e = doc.repos[key];
+    e.locations = e.locations || {};
+    if (!p) delete e.locations[devId];
+    else e.locations[devId] = { device: devName, path: p, status: 'unverified', by: 'dashboard', at: new Date().toISOString() };
+  }, p ? `Gespeichert. ${devName} prüft den Pfad beim nächsten Push.` : `Eintrag für ${devName} entfernt.`);
+}
+function saveRefChat(id, key) {
+  putRefs((doc) => {
+    doc.chats = doc.chats || {};
+    if (!key) delete doc.chats[id];
+    else doc.chats[id] = { repo: key, sub: '', by: 'dashboard', at: new Date().toISOString() };
+  }, 'Zuordnung gespeichert.');
 }
 
 // ---------- Zugang fuer PCs ----------

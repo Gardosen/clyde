@@ -27,6 +27,16 @@ function hashList(body) {
   if (!Array.isArray(hashes) || hashes.length > 100000 || !hashes.every(isHash)) throw httpError(400, 'hashes ungueltig');
   return hashes;
 }
+// Verweise pruefen: nur die bekannten Bereiche, Objekte mit Zeichenketten
+function validRefs(b) {
+  const obj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+  if (!obj(b) || !obj(b.repos || {}) || !obj(b.chats || {}) || !obj(b.devices || {})) throw httpError(400, 'Verweise ungueltig');
+  const s = JSON.stringify({ repos: b.repos || {}, chats: b.chats || {}, devices: b.devices || {} });
+  if (s.length > 4 * 1024 * 1024) throw httpError(413, 'Verweise zu gross');
+  const doc = JSON.parse(s);
+  for (const r of Object.values(doc.repos)) if (!obj(r) || (r.locations && !obj(r.locations))) throw httpError(400, 'Verweise ungueltig');
+  return doc;
+}
 const summary = (m) => ({ id: m.id, createdAt: m.createdAt, host: m.host, user: m.user, platform: m.platform, stats: m.stats });
 // Aeltester Client, mit dem dieser Server sicher arbeitet (Stand-Format v3 ab 0.4.2)
 const MIN_CLIENT = '0.4.2';
@@ -200,6 +210,15 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
       target = asked;
     }
     const store = storeFor(target);
+    if (p === '/refs' && m === 'GET') return send(res, 200, await store.getRefs());
+    if (p === '/refs' && m === 'PUT') {
+      if (target !== who.name) throw httpError(403, 'Fremde Verweise duerfen nur angesehen werden');
+      const body = await readJson(req, 8 * 1024 * 1024);
+      const doc = validRefs(body);
+      const r = await store.putRefs(doc, Number(body.rev) || 0);
+      if (r.conflict) return send(res, 409, { error: 'Die Verweise wurden inzwischen geaendert, bitte neu laden', refs: r.conflict });
+      return send(res, 200, r.refs);
+    }
     if (p === '/usage' && m === 'GET') return send(res, 200, { user: target, gcGraceMinutes: Math.round(gcGraceMs / 60000), ...(await store.usage()) });
 
     const cm = p.match(/^\/snapshots\/([^/]+)\/chats$/);
@@ -207,7 +226,7 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
       const id = decodeURIComponent(cm[1]);
       const man = id === 'latest' ? (await store.listSnapshots())[0] : (validId(id) ? await store.getSnapshot(id) : null);
       if (!man) throw httpError(404, `Snapshot ${id} nicht gefunden`);
-      return send(res, 200, await chatsForSnapshot(store, man));
+      return send(res, 200, await chatsForSnapshot(store, man, await store.getRefs().catch(() => null)));
     }
     if (p === '/blobs/missing' && m === 'POST') {
       return send(res, 200, { missing: await store.missing(hashList(await readJson(req))) });

@@ -23,6 +23,24 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
 
 1. **Trockenlauf:** `clyde pull $ARGUMENTS --clyde-chat --dry-run --no-ask`
 
+1b. **Repos der Chats klaeren.** `clyde refs --pending --json` liefert unter
+   `problems` die Git-Repos, die Chats brauchen und die auf diesem Geraet noch nicht
+   eingetragen sind oder nicht stimmen (`name`, `remote`, `status`, `path`,
+   `suggested`, `chats`). Die Projektordner dieser Chats werden in Schritt 2 nicht
+   eigens erfragt. Je Repo mit **AskUserQuestion** fragen (hoechstens vier je
+   Aufruf, Repo-Name im `header`, betroffene Chats in der Frage):
+   1. **Vom Remote klonen**, Beschreibung: „Nach `suggested` klonen. Anderen
+      Zielordner unter ‚Other' als ‚klonen: PFAD' eintippen."
+   2. **Liegt schon hier**, Beschreibung: „Den Pfad unter ‚Other' eintippen."
+   3. **Ueberspringen**, Beschreibung: „Auf diesem Geraet nicht mehr anbieten."
+   Umsetzen: `clyde refs --clone NAME [--to "PFAD"]`, `clyde refs --set NAME "PFAD"`
+   oder `clyde refs --skip NAME`. Die Antwort wird sofort fuer dieses Geraet
+   gespeichert; Clyde stellt die Chats des Repos auf den Ort hier um. Schlaegt
+   das Klonen fehl (meist fehlt der SSH-Schluessel oder die Git-Anmeldung fuer den
+   Remote), die Meldung weitergeben und nichts anderes versuchen. Lehnt Clyde
+   einen Pfad ab (fehlt, kein Git-Repo, anderes Repo), die Meldung weitergeben und
+   noch einmal fragen.
+
 2. **Fehlende Projektordner klaeren.** Fehlen mehr als vier Ordner (typisch beim
    ersten Pull auf einem neuen Rechner, etwa einem Mac), zuerst mit
    **AskUserQuestion** fragen, ob Clyde alle fehlenden Ordner gesammelt unter
@@ -62,9 +80,7 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
 
 3. **Plan zeigen:** die Zeile `Plan: ...` kurz wiedergeben. Werden Chats
    entfernt, weil sie auf einem anderen PC geloescht wurden, diese Chats nennen
-   und vor dem echten Pull bestaetigen lassen. Zeilen `Git: ... wird geklont`
-   nennen (Ordner und Remote); das Klonen kann bei grossen Repos dauern. Sonst
-   direkt weiter.
+   und vor dem echten Pull bestaetigen lassen. Sonst direkt weiter.
 
 4. **Pull:** `clyde pull $ARGUMENTS --clyde-chat --no-ask`
    - Abbruch, weil andere Chats arbeiten: die Chats nennen, spaeter erneut
@@ -80,11 +96,12 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
    (diese Dateien bleiben unveraendert). Jede Zeile `Hinweis:` weitergeben, besonders: geoeffnete Chats
    erst nach einem Neustart der App weiterverwenden; neue Chats erscheinen in der
    Seitenleiste eventuell erst nach einem Neustart.
-   Die Zeile `Git-Repos: ...` wiedergeben (geklont, vorgespult, uebersprungen mit
-   Grund). Schlaegt Klonen oder Holen fehl, fehlt meist der Zugang zum Remote auf
-   diesem PC (SSH-Schluessel oder Git-Anmeldung einrichten, dann erneut
-   `/clyde:pull`). Uebersprungene Repos mit lokalen Aenderungen oder eigenen
-   Commits nie selbst zuruecksetzen oder ueberschreiben.
+   Die Zeile `Git-Repos: ...` wiedergeben (vorgespult, aktuell, uebersprungen mit
+   Grund). Schlaegt Holen fehl, fehlt meist der Zugang zum Remote auf diesem PC
+   (SSH-Schluessel oder Git-Anmeldung einrichten, dann erneut `/clyde:pull`).
+   Uebersprungene Repos mit lokalen Aenderungen oder eigenen Commits nie selbst
+   zuruecksetzen oder ueberschreiben. Warnungen zu Verweisen (Repo fehlt hier)
+   weitergeben, falls sie in Schritt 1b uebersprungen wurden.
 
 6. **Seitenleiste abgleichen** (nur wenn der Pull nicht abgebrochen wurde; nur in
    der App, im Terminal ueberspringen): genau wie im Skill `/clyde:groups`:

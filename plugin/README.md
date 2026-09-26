@@ -24,7 +24,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 2. **Node.js 20 or newer** on each computer.
 3. **The Clyde command-line tool** on each computer. `/clyde:setup` checks for it
    and offers to install the pinned release from GitHub:
-   `npm install -g github:Gardosen/clyde#v0.5.0`
+   `npm install -g github:Gardosen/clyde#v0.6.0`
 4. **Claude Code** – the desktop app's Code tab or the terminal. The commands run
    local programs and do not work in claude.ai chat or Cowork.
 
@@ -37,15 +37,21 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 | `/clyde:pull` | Fetches chats from the account's other computers and keeps this computer's own chats |
 | `/clyde:status` | Shows the latest snapshot, local changes and chats that are busy |
 | `/clyde:delete [id ...]` | Deletes stored snapshots on the backend after confirmation and frees the space |
-| `/clyde:repos` | Chooses which Git repositories every computer clones and keeps up to date |
+| `/clyde:refs` | Shows and corrects which Git repository belongs to which chat and where it lives on each device |
 | `/clyde:update` | Updates this plugin and the Clyde CLI to the latest release, after asking |
 | `/clyde:groups` | Files chats into the same sidebar groups, pins the same chats and applies renamed groups and chat titles from your other computers, using the app's sidebar tools (no restart; also part of `/clyde:pull`) |
 
-Git repositories a chat works in are taken along automatically: a pull clones
-them into a missing project folder or fast-forwards a clean clone. Local changes
-are never touched. Before pushing, `/clyde:push` offers to commit and push Git
-work that has not reached its remote yet; nothing is committed without your
-choice, and never in a repository another chat is working in.
+Clyde remembers which Git repository each chat works in (from the chat's own
+folder; it never searches folders) and where that repository lives on each of
+your devices. On another device, `/clyde:pull` offers each missing repository:
+clone it from the remote, it is already here (path), or skip it. The answer is
+kept for that device. Clean clones are fast-forwarded, and local changes are
+never touched. `/clyde:push` checks this device's references, uploads
+corrections at once, and offers to commit and push Git work that has not reached
+its remote yet. Nothing is committed without your choice, and never in a
+repository another chat is working in. In the dashboard you can see, per chat
+and device, the project folder, the repository and the memory folder, and
+fine-tune the paths.
 
 Use a dedicated chat for Clyde. That chat is never synchronised itself. The app
 can stay open; Clyde only waits while another chat is in the middle of an answer.
@@ -60,19 +66,22 @@ Clyde is transparent about its data flow:
   `~/.claude/plans`, `~/.claude/history.jsonl` and the desktop app's chat list.
   From the app's settings file `claude_desktop_config.json` it reads only the
   names of your chat groups and which chat belongs to which group; nothing else
-  from that file is read out or sent. If a chat's project folder is a Git
-  repository, it reads the repository's remote address, branch and commit.
+  from that file is read out or sent. If a chat's working folder is inside a
+  Git repository, it reads the repository's remote address, branch, commit and
+  status. It also reads the targets of linked memory folders.
 - **Sends** that data, split into compressed chunks, only to the backend URL you
   enter in `/clyde:setup`, authenticated with your token. Nothing goes anywhere
   else. Chat transcripts contain everything written in them, including file
   paths, code and command output. Git remote addresses are sent without any
-  credentials; project files themselves are never sent. `/clyde:update` (and
+  credentials, together with the local path of each repository and this
+  device's home folder, drive and folder mappings (the references). Project
+  files themselves are never sent. `/clyde:update` (and
   `clyde update`) additionally asks github.com for the latest release and
   downloads it through Claude's plugin commands and npm.
-- **Changes** these same folders on `/clyde:pull`, after writing a backup. With
-  Git repositories, a pull clones a missing project folder from its remote or
-  fast-forwards a clean one; folders with local changes or own commits are never
-  touched (`--no-repos` turns this off). Only when you choose it in
+- **Changes** these same folders on `/clyde:pull`, after writing a backup. It
+  clones a repository only when you choose it, and fast-forwards clean clones.
+  Folders with local changes or own commits are never touched (`--no-repos`
+  turns this off). Only when you choose it in
   `/clyde:push` does it commit (`git add -A`, respecting `.gitignore`) and push
   in a repository. Sidebar groups and pins are set through the app's own
   sidebar tools (create group, move chats, pin); the app's settings file is never

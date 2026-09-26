@@ -20,6 +20,8 @@ export class Store {
   constructor(dataDir) {
     this.blobDir = path.join(dataDir, 'blobs');
     this.snapDir = path.join(dataDir, 'snapshots');
+    this.refsPath = path.join(dataDir, 'refs.json');
+    this.refsLock = Promise.resolve();
     fs.mkdirSync(this.blobDir, { recursive: true });
     fs.mkdirSync(this.snapDir, { recursive: true });
   }
@@ -110,6 +112,28 @@ export class Store {
       try { o.bytes += (await fs.promises.stat(this.blobPath(h))).size; } catch { /* fehlt */ }
     }
     return out;
+  }
+
+  // Verweise (welcher Chat zu welchem Repo gehoert, wo es je Geraet liegt):
+  // eigenes Dokument mit Revision, unabhaengig von den Staenden
+  async getRefs() {
+    try { return JSON.parse(await fs.promises.readFile(this.refsPath, 'utf8')); }
+    catch (e) { if (e.code === 'ENOENT') return { rev: 0, repos: {}, chats: {}, devices: {} }; throw e; }
+  }
+  // Speichert nur, wenn die Revision noch stimmt; sonst { conflict: aktueller Stand }
+  putRefs(doc, expectedRev) {
+    const run = async () => {
+      const cur = await this.getRefs();
+      if ((cur.rev || 0) !== expectedRev) return { conflict: cur };
+      const next = { ...doc, rev: (cur.rev || 0) + 1, updatedAt: new Date().toISOString() };
+      const tmp = `${this.refsPath}.tmp`;
+      await fs.promises.writeFile(tmp, JSON.stringify(next));
+      await fs.promises.rename(tmp, this.refsPath);
+      return { refs: next };
+    };
+    const p = this.refsLock.then(run, run);
+    this.refsLock = p.catch(() => {});
+    return p;
   }
 
   // Tatsaechlich belegter Platz (Chunks komprimiert, jeder Chunk nur einmal)

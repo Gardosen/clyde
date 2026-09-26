@@ -49,6 +49,16 @@ export class Client {
   putSnapshot(m) { return this.json('PUT', `/snapshots/${encodeURIComponent(m.id)}`, m); }
   deleteSnapshot(id, { force = false } = {}) { return this.json('DELETE', `/snapshots/${encodeURIComponent(id)}${force ? '?force=1' : ''}`); }
   gc() { return this.json('POST', '/gc'); }
+  // Verweise; null, wenn der Server sie noch nicht kennt (aelter als 0.6.0)
+  async getRefs() {
+    try { return await this.json('GET', '/refs'); }
+    catch (e) { if (/HTTP 404/.test(e.message)) return null; throw e; }
+  }
+  // Wirft bei geaenderter Revision einen Fehler mit code 'REFS_CONFLICT'
+  async putRefs(doc) {
+    try { return await this.json('PUT', '/refs', doc); }
+    catch (e) { if (/HTTP 409/.test(e.message)) { const c = new Error('Die Verweise wurden inzwischen geaendert'); c.code = 'REFS_CONFLICT'; throw c; } throw e; }
+  }
 
   // blobs: (async) Iterable von {hash, data}; wird gerahmt und gzip-komprimiert gestreamt
   async upload(blobs) {

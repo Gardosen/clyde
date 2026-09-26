@@ -1,16 +1,13 @@
-// Git-Repos der Projektordner mitnehmen.
+// Git-Hilfen fuer die Repos der Chats (welches Repo zu welchem Chat gehoert und wo
+// es je Geraet liegt, steht in src/refs.js).
 //
-// Clyde synchronisiert Chats, keine Projektdateien. Liegt der Projektordner eines
-// Chats in einem Git-Repo mit Remote, merkt sich der Push Remote, Branch und
-// Commit. Der Pull klont das Repo auf einem PC, dem der Ordner fehlt, und spult
-// ein vorhandenes, sauberes Repo desselben Remotes vor (nur fast-forward).
-// Lokale Aenderungen, eigene Commits und Ordner mit anderem Inhalt fasst Clyde
-// nie an, es meldet sie nur. Was nicht auf dem Remote liegt (nicht gepushte
-// Commits, ungesicherte Dateien), kommt auf dem anderen PC nicht an; der Push
-// warnt davor.
+// - inspectRepo: Stand eines Ordners (Remote, Branch, Aenderungen, Upstream)
+// - applyRepos: vorhandene saubere Klone vorspulen (nur fast-forward); lokale
+//   Aenderungen und eigene Commits werden nie angefasst
+// - workItems, commitAndPush, pushRepo: Vergessenes vor dem Push nachholen
 //
-// Sicherheit: Zugangsdaten werden aus HTTP(S)-Adressen entfernt, bevor sie im
-// Stand landen. Beim Klonen sind nur uebliche Adressen erlaubt (https, ssh, git,
+// Sicherheit: Zugangsdaten werden aus HTTP(S)-Adressen entfernt, bevor sie den PC
+// verlassen. Geklont werden nur uebliche Adressen (https, ssh, git,
 // user@host:pfad, absolute Pfade), nie "ext::" oder etwas, das wie eine Option
 // aussieht. Git fragt nie im Terminal nach Passwoertern.
 import fs from 'node:fs';
@@ -118,135 +115,9 @@ export async function inspectRepo(dir) {
 }
 
 // Zu weit gefasst: ein Repo im Home oder auf einem Laufwerk selbst wird nie geklont
-function tooBroad(rootAbs, home) {
+export function tooBroad(rootAbs, home) {
   const r = path.resolve(rootAbs);
   return r === path.parse(r).root || r.toLowerCase() === path.resolve(home).toLowerCase();
-}
-
-// Selbst ausgewaehlte Repos (clyde repos --add), lokale Pfade in config.json
-export const extraRepos = (cfg) => (Array.isArray(cfg.raw?.extraRepos) ? cfg.raw.extraRepos.filter((p) => typeof p === 'string' && p) : []);
-// Mit clyde repos --remove abgewaehlt, beim naechsten Push aus dem gemeinsamen Stand nehmen (neutrale Pfade)
-export const dropRepos = (cfg) => (Array.isArray(cfg.raw?.dropRepos) ? cfg.raw.dropRepos.filter((p) => typeof p === 'string' && p) : []);
-
-// Push: Repos der Projektordner und die selbst ausgewaehlten erfassen; liefert
-// Eintraege (neutrale Pfade), Warnungen und die abzuwaehlenden Repos
-export async function collectRepos(cfg, log) {
-  if (cfg.raw?.repos === false || !(await gitAvailable())) return { repos: [], warnings: [], drop: [] };
-  const found = new Map();
-  const warnings = [];
-  for (const cwd of await sidebarCwds(cfg)) {
-    if (!fs.existsSync(cwd) || [...found.keys()].some((r) => isUnder(cwd, r))) continue;
-    const info = await inspectRepo(cwd);
-    if (!info || tooBroad(info.rootAbs, cfg.home)) continue;
-    found.set(info.root, info);
-  }
-  for (const p of extraRepos(cfg)) {
-    if (!fs.existsSync(p)) { warnings.push(`Ausgewaehltes Git-Repo ${p} gibt es hier nicht (mehr); abwaehlen mit: clyde repos --remove "${p}"`); continue; }
-    if ([...found.keys()].some((r) => isUnder(p, r) && isUnder(r, p))) continue;
-    const info = await inspectRepo(p);
-    if (!info) { warnings.push(`Ausgewaehlter Ordner ${p} ist kein Git-Repo (mehr).`); continue; }
-    found.set(info.root, info);
-  }
-  const repos = [];
-  for (const info of found.values()) {
-    if (!info.remote) { warnings.push(`Git-Repo ${info.root} hat keinen Remote und laesst sich auf anderen PCs nicht klonen.`); continue; }
-    const missing = [];
-    if (info.ahead) missing.push(`${info.ahead} Commit(s) nicht gepusht`);
-    if (info.dirty) missing.push(`${info.dirty} geaenderte Datei(en) nicht committet`);
-    if (info.branch && !info.upstream) missing.push(`Branch ${info.branch} hat keinen Upstream`);
-    if (missing.length) warnings.push(`Git-Repo ${info.root}: ${missing.join(', ')}. Auf den anderen PCs kommt nur an, was auf dem Remote liegt.`);
-    repos.push({ root: canonicalize(info.root, cfg.forms), remote: sanitizeRemote(info.remote), branch: info.branch, head: info.head, host: os.hostname(), at: new Date().toISOString() });
-  }
-  log.debug(`${repos.length} Git-Repos erfasst`);
-  // Abgewaehlte nur entfernen, wenn kein Chat mehr darin arbeitet
-  const drop = dropRepos(cfg).filter((r) => !repos.some((x) => x.root === r));
-  return { repos, warnings, drop };
-}
-
-// Eintraege anderer PCs bleiben, eigene ersetzen gleiche Ordner; drop: abgewaehlte
-export function mergeRepos(prev, mine, drop = []) {
-  const by = new Map((prev || []).map((r) => [r.root, r]));
-  for (const r of mine || []) by.set(r.root, r);
-  for (const d of drop) by.delete(d);
-  return [...by.values()].sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
-}
-// Aendert sich mehr als nur der gemerkte Commit? (Dann lohnt ein neuer Stand.)
-export const reposSignature = (repos) => JSON.stringify((repos || []).map((r) => [r.root, remoteKey(r.remote), r.branch]));
-
-// Kandidaten fuer die eigene Auswahl: Repos in den Projektordnern der Chats und
-// eine Ebene darunter, plus die schon ausgewaehlten; mit Groesse und Status
-export async function scanRepos(cfg) {
-  if (!(await gitAvailable())) throw new Error('git ist auf diesem PC nicht installiert.');
-  const cwds = (await sidebarCwds(cfg)).filter((c) => fs.existsSync(c));
-  const extra = extraRepos(cfg);
-  const dirs = new Set([...cwds, ...extra.filter((p) => fs.existsSync(p))]);
-  for (const c of cwds) {
-    let entries = [];
-    try { entries = fs.readdirSync(c, { withFileTypes: true }); } catch { /* kein Zugriff */ }
-    for (const e of entries) if (e.isDirectory() && !e.name.startsWith('.') && fs.existsSync(path.join(c, e.name, '.git'))) dirs.add(path.join(c, e.name));
-  }
-  const found = new Map();
-  for (const d of dirs) {
-    if ([...found.keys()].some((r) => isUnder(d, r) && isUnder(r, d))) continue;
-    const info = await inspectRepo(d);
-    if (!info || tooBroad(info.rootAbs, cfg.home) || found.has(info.root)) continue;
-    const co = await git(['-C', info.root, 'count-objects', '-v']);
-    const kib = (k) => Number(co.out.split('\n').map((l) => l.split(': ')).find(([n]) => n === k)?.[1] || 0);
-    found.set(info.root, {
-      ...info,
-      sizeBytes: (kib('size') + kib('size-pack')) * 1024,
-      viaChat: cwds.some((c) => isUnder(c, info.root)),
-      selected: extra.some((p) => isUnder(p, info.root) && isUnder(info.root, p)),
-    });
-  }
-  return [...found.values()].sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
-}
-
-const emptyDir = (p) => { try { return fs.readdirSync(p).length === 0; } catch { return false; } };
-const driveExists = (p) => fs.existsSync(path.parse(path.resolve(p)).root);
-
-// Lokale Ordner, in die geklont wuerde (fehlend oder leer); fuer die Frage nach
-// fehlenden Projektordnern: was geklont wird, fehlt nicht
-export function clonableRoots(repos, forms) {
-  const out = [];
-  for (const r of repos || []) {
-    const local = localize(r.root, forms);
-    if (local.includes('@@CLYDE_') || !allowedRemote(r.remote) || !driveExists(local)) continue;
-    if (!fs.existsSync(local) || emptyDir(local)) out.push(local);
-  }
-  return out;
-}
-
-// Pull: was passiert mit welchem Repo? (liest nur)
-export async function planRepos(repos, cfg) {
-  const actions = [];
-  for (const r of repos || []) {
-    const local = localize(r.root, cfg.forms);
-    const a = { root: r.root, local, remote: r.remote, branch: allowedBranch(r.branch) ? r.branch : null, head: r.head };
-    const skip = (reason) => actions.push({ ...a, action: 'skip', reason });
-    if (local.includes('@@CLYDE_')) { skip('Ordner auf diesem PC noch nicht zugeordnet'); continue; }
-    if (!allowedRemote(r.remote)) { skip(`Remote-Adresse nicht erlaubt: ${String(r.remote).slice(0, 80)}`); continue; }
-    let st = null;
-    try { st = fs.statSync(local); } catch { /* fehlt */ }
-    if (!st || (st.isDirectory() && emptyDir(local))) {
-      if (!driveExists(local)) skip(`Laufwerk von ${local} fehlt`);
-      else actions.push({ ...a, action: 'clone' });
-      continue;
-    }
-    if (!st.isDirectory()) { skip('ist kein Ordner'); continue; }
-    const info = await inspectRepo(local);
-    if (!info) { skip('Ordner existiert ohne Git und bleibt unangetastet'); continue; }
-    if (!isUnder(info.root, local) || !isUnder(local, info.root)) { skip(`liegt im Repo ${info.root}`); continue; }
-    if (!info.remote || remoteKey(info.remote) !== remoteKey(r.remote)) { skip(`anderes Remote (${info.remote ? sanitizeRemote(info.remote) : 'keins'})`); continue; }
-    actions.push({ ...a, action: 'update' });
-  }
-  return actions;
-}
-
-export function describeRepoPlan(actions) {
-  return actions.map((a) => (a.action === 'clone' ? `Git: ${a.local} wird geklont von ${a.remote}${a.branch ? ` (${a.branch})` : ''}`
-    : a.action === 'update' ? `Git: ${a.local} wird geholt und vorgespult, falls sauber`
-      : `Git: ${a.local} uebersprungen: ${a.reason}`));
 }
 
 // Pull: klonen und vorspulen. Liefert eine Zusammenfassung.
@@ -294,33 +165,24 @@ export function busyInRepo(root) {
   return liveSessions().filter((s) => s.sessionId !== own?.sessionId && s.status !== 'idle' && s.cwd && isUnder(s.cwd, root)).map(describeSession);
 }
 
-// Nicht mehr vorschlagen (bei /clyde:push "nicht mitnehmen" gewaehlt), lokale Pfade
-export const ignoredRepos = (cfg) => (Array.isArray(cfg.raw?.ignoredRepos) ? cfg.raw.ignoredRepos.filter((p) => typeof p === 'string' && p) : []);
-
-// Vor dem Push: was ist vergessen? Repos, die Clyde mitnimmt, mit Arbeit, die
-// nicht auf dem Remote liegt, und neu gefundene Repos, ueber die noch nicht
-// entschieden ist. Liest nur.
-export async function precheck(cfg) {
-  if (cfg.raw?.repos === false || !(await gitAvailable())) return { items: [] };
-  const found = await scanRepos(cfg);
-  const ignored = ignoredRepos(cfg);
+// Vor dem Push: Arbeit in diesen Repos, die nicht auf dem Remote liegt (geaenderte
+// und neue Dateien, nicht gepushte Commits, Branch ohne Upstream). Liest nur.
+export async function workItems(roots) {
   const items = [];
-  for (const r of found) {
-    const taken = r.viaChat || r.selected;
-    if (taken) {
-      const noUpstream = !!(r.branch && r.head && r.remote && !r.upstream);
-      if (r.dirty || r.untracked || r.ahead || noUpstream || !r.remote) {
-        items.push({
-          kind: 'work', repo: r.root, name: path.basename(r.root), remote: r.remote ? sanitizeRemote(r.remote) : null, branch: r.branch,
-          upstream: r.upstream, changed: r.dirty, untracked: r.untracked, ahead: r.ahead || 0, noUpstream, noRemote: !r.remote, files: r.files,
-          busyChats: busyInRepo(r.root),
-        });
-      }
-    } else if (r.remote && !ignored.some((p) => isUnder(p, r.root) && isUnder(r.root, p))) {
-      items.push({ kind: 'new', repo: r.root, name: path.basename(r.root), remote: sanitizeRemote(r.remote), branch: r.branch, sizeBytes: r.sizeBytes });
-    }
+  const seen = new Set();
+  for (const root of roots) {
+    const r = root && fs.existsSync(root) ? await inspectRepo(root) : null;
+    if (!r || seen.has(r.root)) continue;
+    seen.add(r.root);
+    const noUpstream = !!(r.branch && r.head && r.remote && !r.upstream);
+    if (!(r.dirty || r.untracked || r.ahead || noUpstream || !r.remote)) continue;
+    items.push({
+      kind: 'work', repo: r.root, name: path.basename(r.rootAbs), remote: r.remote ? sanitizeRemote(r.remote) : null, branch: r.branch,
+      upstream: r.upstream, changed: r.dirty, untracked: r.untracked, ahead: r.ahead || 0, noUpstream, noRemote: !r.remote, files: r.files,
+      busyChats: busyInRepo(r.root),
+    });
   }
-  return { items };
+  return items;
 }
 
 // Commits auf den Remote bringen; ohne Upstream mit -u. Kein Zusammenfuehren,

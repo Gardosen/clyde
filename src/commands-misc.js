@@ -179,6 +179,17 @@ export async function status(cfg, opts, log) {
   log.info(`Zum Holen (clyde pull): ${s.pull} neu oder geaendert, ${s.pullDelete} auf anderen PCs geloescht`);
   if (opts.verbose) {
     for (const d of decisions) if (d.kind !== 'same') log.info(`  ${d.kind.padEnd(20)} ${d.root}/${d.l?.lp || d.p}`);
+    // Wo haben die Chats ihr Wissen - je Geraet (aus den Verweisen)
+    const refsDoc = await client.getRefs().catch(() => null);
+    if (refsDoc && Object.keys(refsDoc.devices || {}).length) {
+      const { localChats } = await import('./refs.js');
+      const { chatPlaces, describePlace } = await import('./places.js');
+      log.info('Wo die Chats ihr Wissen haben:');
+      for (const c of await localChats(cfg)) {
+        log.info(`  ${c.title}`);
+        for (const p of chatPlaces(refsDoc, c.id, c.cwd ? canonicalize(c.cwd, cfg.forms) : null)) log.info(`    ${describePlace(p)}`);
+      }
+    } else if (!refsDoc) log.info('Verweise: der Server kennt sie noch nicht (Server aktualisieren).');
   }
 }
 
@@ -288,15 +299,10 @@ export async function del(cfg, opts, log) {
   return { deleted: chosen.length, freedBytes: r.freedBytes, recent: r.recent };
 }
 
-// Git-Repos: anzeigen (gemeinsamer Stand und eigene Auswahl), Kandidaten suchen,
-// auswaehlen oder abwaehlen. Aenderungen wirken mit dem naechsten Push.
+// Git-Repos: Vergessenes vor dem Push nachholen (vom Push-Skill nach Rueckfrage).
+// Welche Repos zu welchen Chats gehoeren und wo sie liegen: clyde refs.
 export async function repos(cfg, opts, log) {
-  const { scanRepos, inspectRepo, extraRepos, dropRepos, ignoredRepos, sanitizeRemote, commitAndPush, pushRepo } = await import('./repos.js');
-  const { isUnder } = await import('./remap.js');
-  const same = (a, b) => isUnder(a, b) && isUnder(b, a);
-  const raw = { ...cfg.raw, extraRepos: extraRepos(cfg), dropRepos: dropRepos(cfg), ignoredRepos: ignoredRepos(cfg) };
-  const argPaths = () => (opts.args || []).map((p) => normalizeHome(path.resolve(p.replace(/^["']|["']$/g, ''))));
-  // Vergessenes nachholen (vom Push-Skill nach Rueckfrage aufgerufen)
+  const { commitAndPush, pushRepo } = await import('./repos.js');
   if (opts.commit) {
     const r = await commitAndPush(normalizeHome(path.resolve(opts.commit)), opts.message, { force: opts.force });
     log.info(`${r.root}: ${r.committed ? `committet ("${r.message}") und ` : ''}auf den Remote gepusht (${r.branch}).`);
@@ -307,64 +313,57 @@ export async function repos(cfg, opts, log) {
     log.info(`${r.root}: Commits auf den Remote gepusht (${r.branch}).`);
     return r;
   }
-  if (opts.ignore) {
-    const paths = argPaths();
-    if (!paths.length) throw new Error('Aufruf: clyde repos --ignore PFAD [PFAD ...]');
-    for (const p of paths) if (!raw.ignoredRepos.some((x) => same(x, p))) raw.ignoredRepos.push(p);
-    saveConfig(raw);
-    log.info(`Wird nicht mehr vorgeschlagen: ${paths.join(' | ')} (mitnehmen jederzeit mit clyde repos --add)`);
-    return { ignored: raw.ignoredRepos };
+  if (opts.scan || opts.add || opts.remove !== undefined || opts.ignore) {
+    throw new Error('Clyde durchsucht keine Ordner mehr nach Repos. Welches Repo zu einem Chat gehoert, ergibt sich aus seinem Arbeitsordner; anzeigen und aendern mit clyde refs (siehe clyde --help).');
   }
-  if (opts.scan) {
-    const found = await scanRepos(cfg);
-    if (!found.length) { log.info('In und direkt unter den Projektordnern deiner Chats liegen keine Git-Repos.'); return { found }; }
-    log.info('Git-Repos in und direkt unter den Projektordnern deiner Chats:');
-    found.forEach((r, i) => {
-      const state = r.viaChat ? 'automatisch (ein Chat arbeitet darin)' : r.selected ? 'ausgewaehlt' : raw.ignoredRepos.some((x) => same(x, r.root)) ? 'nicht ausgewaehlt (wird nicht vorgeschlagen)' : 'nicht ausgewaehlt';
-      const warn = [!r.remote && 'kein Remote', r.ahead && `${r.ahead} Commit(s) nicht gepusht`, r.dirty && `${r.dirty} Datei(en) nicht committet`, r.untracked && `${r.untracked} neue Datei(en)`].filter(Boolean);
-      log.info(`${String(i + 1).padStart(2)}. ${r.root}  ${r.remote ? sanitizeRemote(r.remote) : '-'}  [${!r.head ? 'leer' : r.branch || 'losgeloest'}]  ${fmtBytes(r.sizeBytes)}  ${state}${warn.length ? `  (${warn.join(', ')})` : ''}`);
-    });
-    log.info('Auswaehlen: clyde repos --add PFAD [PFAD ...]   abwaehlen: clyde repos --remove PFAD');
-    return { found };
-  }
-  if (opts.add) {
-    const paths = argPaths();
-    if (!paths.length) throw new Error('Aufruf: clyde repos --add PFAD [PFAD ...]   (Kandidaten: clyde repos --scan)');
-    for (const p of paths) {
-      const info = fs.existsSync(p) ? await inspectRepo(p) : null;
-      if (!info) throw new Error(`${p} ist kein Git-Repo.`);
-      if (!info.remote) throw new Error(`${info.root} hat keinen Remote und laesst sich auf anderen PCs nicht klonen.`);
-      if (!raw.extraRepos.some((x) => same(x, info.root))) raw.extraRepos.push(info.root);
-      raw.ignoredRepos = raw.ignoredRepos.filter((x) => !same(x, info.root));
-      const canon = canonicalize(info.root, cfg.forms);
-      raw.dropRepos = raw.dropRepos.filter((d) => d !== canon);
-      log.info(`Ausgewaehlt: ${info.root} (${sanitizeRemote(info.remote)})`);
+  return refs(cfg, opts, log);
+}
+
+// Verweise: welcher Chat zu welchem Repo gehoert und wo es auf jedem Geraet liegt
+export async function refs(cfg, opts, log) {
+  const R = await import('./refs.js');
+  const client = new Client(cfg.server, cfg.token);
+  const a = opts.args || [];
+  const need = (n, usage) => { if (a.length < n) throw new Error(`Aufruf: ${usage}`); };
+  if (opts.set) { need(2, 'clyde refs --set REPO PFAD'); return R.setLocation(cfg, client, a[0], a[1], opts, log); }
+  if (opts.clone) { need(1, 'clyde refs --clone REPO [--to PFAD]'); return R.cloneRepo(cfg, client, a[0], opts.to, opts, log); }
+  if (opts.skip) { need(1, 'clyde refs --skip REPO'); return R.skipRepo(cfg, client, a[0], log); }
+  if (opts.link) { need(2, 'clyde refs --link CHAT REPO'); return R.linkChat(cfg, client, a[0], a[1], log); }
+  if (opts.unlink) { need(1, 'clyde refs --unlink CHAT'); return R.linkChat(cfg, client, a[0], null, log); }
+  // Anzeigen; mit --check pruefen und Korrekturen hochladen; mit --pending auch
+  // die Chats des gemeinsamen Stands einbeziehen, die hier noch fehlen (Pull)
+  let extraChatIds = [];
+  let extraTitles = null;
+  if (opts.pending) {
+    const { projectChats } = await import('./sync.js');
+    const snap = await fetchLatest(client);
+    if (snap) {
+      extraChatIds = (snap.roots['desktop-sessions']?.files || []).map((f) => f.p.split('/').pop())
+        .filter((n) => n.startsWith('local_') && n.endsWith('.json')).map((n) => n.slice(0, -5)).filter((id) => !cfg.exclude.some((x) => id.includes(x)));
+      extraTitles = (await projectChats(client, snap).catch(() => null))?.byId || null;
     }
-    saveConfig(raw);
-    log.info('Wirkt mit dem naechsten Push; die anderen PCs klonen es beim naechsten Pull.');
-    return { selected: raw.extraRepos };
   }
-  if (opts.remove !== undefined) {
-    const p = normalizeHome(path.resolve(String(opts.remove).replace(/^["']|["']$/g, '')));
-    const hit = raw.extraRepos.find((x) => same(x, p));
-    if (!hit) throw new Error(`${p} ist nicht ausgewaehlt (siehe clyde repos).`);
-    raw.extraRepos = raw.extraRepos.filter((x) => x !== hit);
-    const canon = canonicalize(hit, cfg.forms);
-    if (!raw.dropRepos.includes(canon)) raw.dropRepos.push(canon);
-    saveConfig(raw);
-    const { sidebarCwds } = await import('./repos.js');
-    if ((await sidebarCwds(cfg)).some((c) => isUnder(c, hit))) log.warn(`In ${hit} arbeiten Chats; es bleibt deshalb automatisch dabei.`);
-    log.info(`Abgewaehlt: ${hit}. Der naechste Push nimmt es aus dem gemeinsamen Stand; vorhandene Klone auf anderen PCs bleiben, werden aber nicht mehr aktualisiert.`);
-    return { selected: raw.extraRepos };
+  const r = await R.syncRefs(cfg, client, { write: !!opts.check, extraChatIds, extraTitles });
+  if (r.unsupported) throw new Error('Der Server kennt noch keine Verweise; Server aktualisieren (git pull, dann docker compose up -d --build).');
+  const titles = new Map([...(extraTitles || []), ...r.facts.chats.map((c) => [c.id, c.title])]);
+  const list = Object.entries(r.refs.repos).map(([key, e]) => ({
+    key, name: e.name, remote: e.remote, branch: e.branch || null,
+    chats: Object.entries(r.refs.chats).filter(([, c]) => c.repo === key).map(([id]) => titles.get(id) || id),
+    here: e.locations?.[r.device.id] || null,
+    devices: Object.entries(e.locations || {}).filter(([id]) => id !== r.device.id).map(([id, l]) => ({ device: r.refs.devices?.[id]?.name || l.device || id, path: l.path, status: l.status, by: l.by })),
+  }));
+  const out = { device: r.device, rev: r.refs.rev, problems: r.problems, repos: list };
+  if (opts.json) { process.stdout.write(JSON.stringify(out, null, 1) + String.fromCharCode(10)); return out; }
+  if (!list.length) log.info('Noch keine Verweise: kein Chat arbeitet in einem Git-Repo mit Remote (oder es wurde noch nicht gepusht).');
+  for (const x of list) {
+    log.info(`${x.name}  ${x.remote}${x.branch ? `  [${x.branch}]` : ''}`);
+    if (x.chats.length) log.info(`  Chats: ${x.chats.join(' | ')}`);
+    log.info(`  ${r.device.name} (hier): ${x.here ? `${x.here.path || '-'} [${x.here.status}${x.here.by === 'dashboard' ? ', aus dem Dashboard' : ''}]` : 'nicht eingetragen'}`);
+    for (const d of x.devices) log.info(`  ${d.device}: ${d.path || '-'} [${d.status}]`);
   }
-  const snap = await fetchLatest(new Client(cfg.server, cfg.token));
-  const shared = snap?.repos || [];
-  log.info(shared.length ? `Im gemeinsamen Stand (${shared.length}):` : 'Im gemeinsamen Stand sind keine Git-Repos vermerkt.');
-  for (const r of shared) log.info(`  ${localize(r.root, cfg.forms)}  ${r.remote}  [${r.branch || 'losgeloest'}]  von ${r.host}`);
-  const sel = raw.extraRepos;
-  log.info(sel.length ? `Auf diesem PC ausgewaehlt (${sel.length}): ${sel.join(' | ')}` : 'Auf diesem PC ist nichts eigens ausgewaehlt (Kandidaten: clyde repos --scan).');
-  if (raw.dropRepos.length) log.info(`Beim naechsten Push abgewaehlt: ${raw.dropRepos.map((d) => localize(d, cfg.forms)).join(' | ')}`);
-  return { shared, selected: sel };
+  for (const p of r.problems) log.warn(R.describeProblem(p));
+  if (opts.check && r.changed) log.info(`Verweise hochgeladen (Revision ${r.refs.rev}).`);
+  return out;
 }
 
 // Gruppen der Chatliste: Soll-Zustand aus dem gemeinsamen Stand fuer die Chats,
