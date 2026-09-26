@@ -87,3 +87,54 @@ test('Umstellen auf ein vorhandenes Repo: Trockenlauf aendert nichts, danach zei
   const refs = await new Client(SERVER, TOKEN).getRefs();
   assert.equal(refs.chats.local_a.repo, remoteKey(REMOTE), 'Repo gleich in die Verweise eingetragen');
 });
+
+test('App schreibt den alten Ordner zurueck: erkannt, nicht anlegbar, wieder umstellen; offene Neustarts', async () => {
+  const ATLAS = path.join(tmp, 'Forjego', 'roguard-atlas');
+  let r = await folders(cfg(), {}, quiet);
+  assert.deepEqual(r.restartPending.map((p) => p.id).sort(), ['local_a', 'local_b'], 'umgestellt, App noch nicht bestaetigt');
+
+  // "Aegis Web" vor dem Neustart geoeffnet: die App schreibt ihren alten Ordner zurueck
+  const f = path.join(base, 'sessions', 'org', 'acct', 'local_a.json');
+  fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), cwd: GONE1, originCwd: GONE1, lastFocusedAt: Date.now() }));
+  r = await folders(cfg(), {}, quiet);
+  assert.deepEqual(r.missing.map((e) => [e.cwd, e.target, e.reverted]), [[GONE1, ATLAS, true]]);
+  assert.deepEqual(r.restartPending.map((p) => p.id), ['local_b'], 'zurueckgeschrieben zaehlt als fehlend, nicht als offen');
+  await assert.rejects(folders(cfg(), { mkdir: true, args: ['Aegis Web'] }, quiet), /--reapply/, 'alten Ordner anlegen wuerde das Projekt spalten');
+  await assert.rejects(folders(cfg(), { set: true, args: ['Aegis Web', path.join(tmp, 'anders')], yes: true }, quiet), /map --remove/);
+
+  const dry = await folders(cfg(), { reapply: true, args: ['Aegis Web'], dryRun: true }, quiet);
+  assert.equal(dry.set, false);
+  assert.equal(cwdOf('a'), GONE1, 'Trockenlauf aendert nichts');
+  const warned = [];
+  const res = await folders(cfg(), { set: true, args: ['Aegis Web', ATLAS], yes: true }, { ...quiet, warn: (s) => warned.push(s) });
+  assert.equal(res.set, true, '--set auf denselben Ordner = wieder umstellen');
+  assert.deepEqual(warned, [], 'keine Warnung, dass das Ziel schon Chats hat');
+  assert.equal(cwdOf('a'), ATLAS);
+  assert.equal(JSON.parse(fs.readFileSync(f, 'utf8')).originCwd, ATLAS);
+  assert.equal(cwdOf('b'), ATLAS);
+
+  r = await folders(cfg(), {}, quiet);
+  assert.deepEqual(r.missing, []);
+  assert.deepEqual(r.restartPending.map((p) => p.id).sort(), ['local_a', 'local_b']);
+  assert.deepEqual((await folders(cfg(), { settled: true, args: ['local_a', 'local_b', 'local_x'] }, quiet)).settled, ['local_a', 'local_b']);
+  assert.deepEqual((await folders(cfg(), {}, quiet)).restartPending, []);
+});
+
+test('Sidebar-Eintrag in einer Zeile: eine anders zugeordnete Erwaehnung bleibt stehen, cwd wird trotzdem umgestellt', async () => {
+  const { remapContent } = await import('../src/remap.js');
+  const { formsFor } = await import('../src/scan.js');
+  const { configFromRaw } = await import('../src/config.js');
+  const X = path.join(tmp, 'x', 'Alt'); // X ist schon anderswohin zugeordnet (wie C:\Aegis)
+  const Y = path.join(tmp, 'y', 'Neu');
+  const OLDP = path.join(tmp, 'weg', 'Scratch2');
+  const NEWP = path.join(tmp, 'D', 'Tales');
+  const raw0 = cfg().raw;
+  const oldCfg = configFromRaw({ ...raw0, pathMap: { [X]: Y } });
+  const newCfg = configFromRaw({ ...raw0, pathMap: { [X]: Y, [OLDP]: NEWP } });
+  const lp = 'org/acct/local_z.json';
+  const line = Buffer.from(JSON.stringify({ cwd: OLDP, originCwd: OLDP, scratchPromptRecents: [X], n: 1 }));
+  const stats = {};
+  const out = remapContent(line, formsFor(oldCfg, oldCfg.roots['desktop-sessions'], lp), formsFor(newCfg, newCfg.roots['desktop-sessions'], lp), 'json', null, stats);
+  assert.equal(out.toString(), JSON.stringify({ cwd: NEWP, originCwd: NEWP, scratchPromptRecents: [X], n: 1 }), 'nur die umkehrbaren Strings, sonst byte-gleich');
+  assert.deepEqual([stats.lines, stats.kept], [1, 1]);
+});

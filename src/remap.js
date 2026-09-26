@@ -19,6 +19,7 @@ import { canonicalize, canonicalizeBuf, localizeBuf, localize, pathVariants, tex
 import { liveSessions, ownSession, describeSession, sessionIds, pathBelongsTo } from './session.js';
 import { backupFiles, pruneEmptyDirs } from './restore.js';
 import { checkGuard } from './guard.js';
+import { addPending } from './pending-restart.js';
 
 const win = process.platform === 'win32';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,6 +42,29 @@ const samePath = (a, b) => (win ? path.resolve(a).toLowerCase() === path.resolve
 
 const validJson = (b) => { try { JSON.parse(b.toString('utf8')); return true; } catch { return false; } };
 
+// Eine Zeile umstellen. Laesst sie sich als Ganzes nicht verlustfrei umschreiben
+// (etwa ein Sidebar-Eintrag in einer Zeile, der nebenbei einen anders zugeordneten
+// Ordner erwaehnt), dann jeden JSON-String einzeln: nur die nicht umkehrbaren
+// bleiben stehen. Liefert { out, kept }.
+const JSON_STRING = /"(?:[^"\\]|\\.)*"/g;
+function remapLine(line, oldForms, newForms) {
+  const one = (b) => {
+    const n = canonicalizeBuf(b, oldForms);
+    return localizeBuf(n, oldForms).equals(b) ? localizeBuf(n, newForms) : null;
+  };
+  const whole = one(line);
+  if (whole) return { out: whole, kept: false };
+  const s = line.toString('utf8');
+  if (!Buffer.from(s, 'utf8').equals(line)) return { out: line, kept: true };
+  let kept = false;
+  const out = s.replace(JSON_STRING, (tok) => {
+    const r = one(Buffer.from(tok, 'utf8'));
+    if (!r) { kept = true; return tok; }
+    return r.toString('utf8');
+  });
+  return { out: Buffer.from(out, 'utf8'), kept };
+}
+
 // Inhalt einer Datei des Projekts umstellen: neutral mit den alten Regeln, lokal
 // mit den neuen. lineFilter: nur passende Zeilen (Eingabe-Historie).
 export function remapContent(raw, oldForms, newForms, mode, lineFilter, stats = {}) {
@@ -56,14 +80,12 @@ export function remapContent(raw, oldForms, newForms, mode, lineFilter, stats = 
     const line = raw.subarray(start, stop);
     let out = line;
     if (line.length && (!lineFilter || lineFilter(line))) {
-      const n = canonicalizeBuf(line, oldForms);
-      if (!localizeBuf(n, oldForms).equals(line)) stats.kept++; // schon jetzt nicht verlustfrei: nicht anfassen
-      else {
-        const loc = localizeBuf(n, newForms);
-        if (!loc.equals(line)) {
-          if (mode === 'jsonl' && validJson(line) && !validJson(loc)) stats.kept++;
-          else { out = loc; stats.lines++; changed = true; }
-        }
+      // schon jetzt nicht verlustfrei umkehrbare Teile: nicht anfassen
+      const { out: loc, kept } = remapLine(line, oldForms, newForms);
+      if (kept) stats.kept++;
+      if (!loc.equals(line)) {
+        if (mode === 'jsonl' && validJson(line) && !validJson(loc)) { if (!kept) stats.kept++; }
+        else { out = loc; stats.lines++; changed = true; }
       }
     }
     parts.push(out);
@@ -97,7 +119,9 @@ async function listLocal(cfg) {
 
 // Plan: welche Dateien gehoeren zu den Chats, deren Projektordner "from" ist, und
 // wohin kommen sie ("to")?
-export async function planRemap(oldCfg, newCfg, { from, to }, log) {
+// again: dieselbe Umstellung noch einmal (die App hat den alten Ordner zurueckgeschrieben);
+// dass der Zielordner schon Chats und Erwaehnungen hat, ist dann erwartet.
+export async function planRemap(oldCfg, newCfg, { from, to, again = false }, log) {
   const local = await listLocal(oldCfg);
   const variants = (p) => [...new Set(Object.values(pathVariants(normalizeHome(p))))].filter((v) => v.length > 3).map((v) => Buffer.from(v));
   const fromV = variants(from);
@@ -204,8 +228,8 @@ export async function planRemap(oldCfg, newCfg, { from, to }, log) {
   const inScope = liveSessions().filter((s) => s.sessionId !== own?.sessionId && sessionIds(s).some((id) => ids.has(id)));
   const warnings = [];
   if (!samePath(from, to) && fs.existsSync(from) && (moved || rewritten)) warnings.push(`${from} gibt es auf diesem PC als Ordner. Die Chats oben zeigen danach trotzdem auf ${to}.`);
-  if (chatsAtTarget.length) warnings.push(`${to} ist hier schon Projektordner von ${chatsAtTarget.length} Chat(s): ${chatsAtTarget.slice(0, 6).join(' | ')}${chatsAtTarget.length > 6 ? ' | ...' : ''}. Beide Gruppen gelten danach als dasselbe Projekt, auch auf den anderen PCs.`);
-  if (targetMentions) warnings.push(`${targetMentions} der umzustellenden Dateien erwaehnen ${to} bereits. Danach ist dort nicht mehr zu unterscheiden, was vorher ${from} war.`);
+  if (chatsAtTarget.length && !again) warnings.push(`${to} ist hier schon Projektordner von ${chatsAtTarget.length} Chat(s): ${chatsAtTarget.slice(0, 6).join(' | ')}${chatsAtTarget.length > 6 ? ' | ...' : ''}. Beide Gruppen gelten danach als dasselbe Projekt, auch auf den anderen PCs.`);
+  if (targetMentions && !again) warnings.push(`${targetMentions} der umzustellenden Dateien erwaehnen ${to} bereits. Danach ist dort nicht mehr zu unterscheiden, was vorher ${from} war.`);
   if (conflicts.length) warnings.push(`${conflicts.length} Datei(en) gibt es am neuen Ort schon; sie werden nicht ueberschrieben und bleiben am alten Ort: ${conflicts.slice(0, 3).map((c) => c.lpNew).join(', ')}`);
   return {
     from, to, chats, ids: [...ids], todo, moved, rewritten, lines: stats.lines, kept: stats.kept,
@@ -219,7 +243,7 @@ export function describeRemap(plan) {
   const info = [];
   info.push(plan.chats.length ? `  Chats mit Projektordner ${plan.from}: ${plan.chats.length} (${plan.chats.slice(0, 8).join(' | ')}${plan.chats.length > 8 ? ' | ...' : ''})` : `  Hier gibt es keine Chats mit Projektordner ${plan.from}.`);
   info.push(`  Dateien: ${plan.moved} nach ${plan.to} verschieben, ${plan.rewritten} weitere mit neuem Pfad; ${plan.lines} Zeilen aendern sich.`);
-  if (plan.kept) info.push(`  ${plan.kept} Zeilen lassen sich nicht verlustfrei umschreiben und bleiben unveraendert.`);
+  if (plan.kept) info.push(`  ${plan.kept} Zeilen enthalten Stellen, die sich nicht verlustfrei umschreiben lassen; diese Stellen bleiben unveraendert.`);
   if (plan.mentionsElsewhere) info.push(`  ${plan.mentionsElsewhere} andere Dateien erwaehnen ${plan.from}; sie gehoeren nicht zu diesen Chats und bleiben unveraendert.`);
   if (plan.open.length) info.push(`  In der App geoeffnet (danach die App neu starten, bevor du dort weiterschreibst): ${plan.open.join(', ')}`);
   const warn = plan.warnings.map((w) => `Achtung: ${w}`);
@@ -232,7 +256,7 @@ export const remapNeedsConfirm = (plan) => plan.todo.length > 0 || plan.warnings
 // Plan umsetzen. Unmittelbar vorher wird erneut geprueft, ob ein Chat des Projekts
 // arbeitet; die Originale werden gesichert, die Aenderungszeit bleibt erhalten.
 export async function applyRemap(plan, oldCfg, newCfg, opts, log) {
-  if (!plan.todo.length) return { written: 0, backupDir: null };
+  if (!plan.todo.length) return { written: 0, backupDir: null, relocated: [] };
   const own = ownSession();
   const ids = new Set(plan.ids);
   const busy = liveSessions().filter((s) => s.sessionId !== own?.sessionId && s.status !== 'idle' && sessionIds(s).some((id) => ids.has(id)));
@@ -241,10 +265,18 @@ export async function applyRemap(plan, oldCfg, newCfg, opts, log) {
   const backupDir = await backupFiles('map', plan.todo.map((it) => ({ root: it.root, lp: it.lp, abs: it.abs })), log);
   const rootSet = new Set(Object.values(oldCfg.roots).map((r) => path.resolve(r.path)));
   const parents = new Set();
+  const relocated = [];
   for (const it of plan.todo) {
     const raw = await fs.promises.readFile(it.abs);
     const st = await fs.promises.stat(it.abs);
     const out = remapContent(raw, formsFor(oldCfg, oldCfg.roots[it.root], it.lp), formsFor(newCfg, newCfg.roots[it.root], it.lpNew), textMode(it.lp), it.lineFilter);
+    if (it.root === 'desktop-sessions' && SIDEBAR.test(it.lp)) {
+      // Chats mit neuem Arbeitsordner: die laufende App uebernimmt ihn erst nach einem Neustart
+      try {
+        const [a, b] = [JSON.parse(raw.toString('utf8')), JSON.parse(out.toString('utf8'))];
+        if (b.cwd && a.cwd !== b.cwd) relocated.push({ id: path.basename(it.lpNew, '.json'), title: b.title || b.cliSessionId || '', cwd: b.cwd });
+      } catch { /* kein gueltiges JSON: bleibt unberuecksichtigt */ }
+    }
     await fs.promises.mkdir(path.dirname(it.absNew), { recursive: true });
     const tmp = `${it.absNew}.clyde-tmp`;
     await fs.promises.writeFile(tmp, out);
@@ -255,15 +287,16 @@ export async function applyRemap(plan, oldCfg, newCfg, opts, log) {
   }
   for (const dir of parents) await pruneEmptyDirs(dir, rootSet);
   log.info(`${plan.moved} Dateien verschoben, ${plan.rewritten} mit neuem Pfad versehen. Originale gesichert unter ${backupDir}`);
-  return { written: plan.todo.length, backupDir };
+  addPending(relocated);
+  return { written: plan.todo.length, backupDir, relocated };
 }
 
 // Zuordnung aendern: Plan zeigen, bei Bedarf bestaetigen lassen, umsetzen.
 // Liefert {applied, plan}; die Konfiguration speichert der Aufrufer (nur wenn applied).
 // Ohne Terminal (Plugin) wird ohne --yes nichts geaendert.
 // onlyOnWarnings: nur bei Warnungen nachfragen (der Nutzer hat den Pfad gerade selbst gewaehlt)
-export async function changeMapping({ oldCfg, newCfg, from, to, title, opts, log, ask, onlyOnWarnings = false }) {
-  const plan = await planRemap(oldCfg, newCfg, { from, to }, log);
+export async function changeMapping({ oldCfg, newCfg, from, to, title, opts, log, ask, onlyOnWarnings = false, again = false }) {
+  const plan = await planRemap(oldCfg, newCfg, { from, to, again }, log);
   const { info, warn } = describeRemap(plan);
   log.info(title);
   for (const l of info) log.info(l);
@@ -276,6 +309,6 @@ export async function changeMapping({ oldCfg, newCfg, from, to, title, opts, log
     const a = String(await ask('Ausfuehren? [j/N] ')).trim().toLowerCase();
     if (!['j', 'ja', 'y', 'yes'].includes(a)) { log.info('Abgebrochen, nichts geaendert.'); return { applied: false, plan }; }
   }
-  await applyRemap(plan, oldCfg, newCfg, opts, log);
-  return { applied: true, plan };
+  const res = await applyRemap(plan, oldCfg, newCfg, opts, log);
+  return { applied: true, plan, relocated: res.relocated };
 }

@@ -390,6 +390,14 @@ Clyde chat with `/clyde:folders` (or `clyde folders`):
   it is added to the references at once. The running app only sees the change
   after a restart; do not open those chats before, or the app writes the old
   folder back.
+- **Switch again** (`clyde folders --reapply FOLDER --dry-run`, then `--yes`): if
+  the app did write the old folder back, `clyde folders` shows the chat with the
+  folder it was switched to. This puts it back there. Creating the old folder
+  instead is refused, because it would split the project in two.
+
+After switching, Clyde remembers the chats until the app is known to have picked
+up the new folder. `/clyde:folders` asks the app for each of them and names those
+that still need an app restart (`clyde folders --settled ID...` marks them done).
 
 `/clyde:pull` runs the same check after pulling.
 

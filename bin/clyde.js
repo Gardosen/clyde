@@ -47,6 +47,9 @@ Befehle
   folders --mkdir ORDNER|CHAT       den fehlenden Ordner leer anlegen (Chat laeuft sofort weiter)
   folders --set ORDNER|CHAT PFAD    Chats auf einen vorhandenen Ordner umstellen (--dry-run/--yes;
                                     wirkt nach einem Neustart der App)
+  folders --reapply ORDNER|CHAT     Chats, bei denen die App den alten Ordner zurueckgeschrieben hat,
+                                    wieder auf den umgestellten Ordner stellen (--dry-run/--yes)
+  folders --settled ID...           App kennt den neuen Ordner dieser Chats (aus /clyde:folders)
   link [PFAD|REPO] [--unlink]       den aufrufenden Chat der App einem Repo zuordnen (/clyde:link);
                                     ohne Angabe: zeigen, womit er verknuepft ist
   repos --commit PFAD [-m TEXT]     alles committen und auf den Remote pushen
@@ -125,6 +128,8 @@ try {
       unlink: { type: 'boolean', default: false },
       pending: { type: 'boolean', default: false },
       mkdir: { type: 'boolean', default: false },
+      reapply: { type: 'boolean', default: false },
+      settled: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -150,7 +155,7 @@ const opts = {
   exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
   force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, noRepos: values['no-repos'], scan: values.scan, check: values.check, json: values.json,
   commit: expandHome(values.commit), gitPush: expandHome(values.push), message: values.message, ignore: values.ignore, done: values.done,
-  set: values.set, clone: values.clone, skip: values.skip, link: values.link, unlink: values.unlink, pending: values.pending, mkdir: values.mkdir, verbose: values.verbose,
+  set: values.set, clone: values.clone, skip: values.skip, link: values.link, unlink: values.unlink, pending: values.pending, mkdir: values.mkdir, reapply: values.reapply, settled: values.settled, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
 const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups, update, refs, link, folders };

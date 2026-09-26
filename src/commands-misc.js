@@ -434,39 +434,88 @@ export async function link(cfg, opts, log) {
 }
 
 // clyde folders [--json] | --mkdir ORDNER|CHAT | --set ORDNER|CHAT NEUER-PFAD [--create] [--dry-run|--yes]
+//               | --reapply ORDNER|CHAT [--create] [--dry-run|--yes] | --settled ID...
 // Chats, deren Arbeitsordner es hier nicht gibt: anzeigen, Ordner anlegen oder
 // auf einen vorhandenen Ordner umstellen (ohne dass die App eine Kopie anlegt).
+// restartPending: umgestellte Chats, bei denen noch nicht bestaetigt ist, dass die
+// App den neuen Ordner kennt (der Skill fragt die App und meldet sie mit --settled).
 export async function folders(cfg, opts, log) {
   const F = await import('./folders.js');
-  const list = await F.missingFolders(cfg);
+  const P = await import('./pending-restart.js');
+  const { localChats } = await import('./refs.js');
+  const chats = await localChats(cfg);
+  const list = await F.missingFolders(cfg, chats);
   const a = opts.args || [];
+  const titles = (e) => e.chats.map((c) => `"${c.title}"`).join(', ');
+  const restartHint = 'Die App jetzt neu starten und diese Chats vorher nicht oeffnen, sonst schreibt sie den alten Ordner zurueck.';
+  const refreshRefs = async () => {
+    // Liegt der neue Ordner in einem Git-Repo, gleich in die Verweise eintragen
+    try {
+      const { syncRefs } = await import('./refs.js');
+      await syncRefs(loadConfig(), new Client(cfg.server, cfg.token));
+    } catch { /* kommt mit dem naechsten Push */ }
+  };
+  if (opts.settled) {
+    const done = P.settlePending(a);
+    if (!opts.json) log.info(done.length ? `Neuer Ordner in der App bestaetigt: ${done.length} Chat(s).` : 'Nichts offen zu diesen IDs.');
+    return { settled: done };
+  }
   if (opts.mkdir) {
     if (!a[0]) throw new Error('Aufruf: clyde folders --mkdir ORDNER|CHAT');
     const e = F.resolveMissing(list, a[0]);
+    if (e.target) throw new Error(`${titles(e)} ${e.chats.length > 1 ? 'sind' : 'ist'} schon auf ${e.target} umgestellt. Wieder dorthin stellen: clyde folders --reapply "${e.cwd}" --dry-run`);
     if (!e.creatable) throw new Error(`${e.cwd} laesst sich hier nicht anlegen (Laufwerk fehlt oder Platzhalter). Stattdessen umstellen: clyde folders --set "${e.cwd}" PFAD`);
     fs.mkdirSync(e.cwd, { recursive: true });
-    log.info(`Ordner angelegt: ${e.cwd}. ${e.chats.map((c) => `"${c.title}"`).join(', ')} laufen damit sofort weiter (Chat notfalls neu anklicken).`);
+    log.info(`Ordner angelegt: ${e.cwd}. ${titles(e)} laufen damit sofort weiter (Chat notfalls neu anklicken).`);
     return { created: e.cwd, chats: e.chats };
+  }
+  if (opts.reapply) {
+    if (!a[0]) throw new Error('Aufruf: clyde folders --reapply ORDNER|CHAT [--create] [--dry-run|--yes]');
+    const e = F.resolveMissing(list.filter((x) => x.target), a[0]);
+    const exists = fs.existsSync(e.target);
+    if (!exists && !opts.create) throw new Error(`${e.target} gibt es hier nicht (mit --create wird er angelegt).`);
+    // Dieselbe Umstellung wie beim Setzen der Zuordnung: vorher galt sie noch nicht
+    const raw = { ...cfg.raw, pathMap: { ...(cfg.raw.pathMap || {}) } };
+    delete raw.pathMap[e.mappedBy];
+    const r = await changeMapping({ oldCfg: configFromRaw(raw), newCfg: cfg, from: e.cwd, to: e.target, title: `Wieder umstellen: ${e.cwd} -> ${e.target}${exists ? '' : ' (Ordner wird angelegt)'}`, opts, log, ask: askFor(opts), again: true });
+    if (r.applied) {
+      if (!exists) { fs.mkdirSync(e.target, { recursive: true }); log.info(`Ordner angelegt: ${e.target}`); }
+      await refreshRefs();
+      log.info(`Wieder umgestellt: ${titles(e)} ${e.chats.length > 1 ? 'zeigen' : 'zeigt'} jetzt auf ${e.target}. ${restartHint}`);
+    }
+    return { set: r.applied, from: e.cwd, to: e.target, chats: e.chats, needsRestart: r.applied };
   }
   if (opts.set) {
     if (a.length < 2) throw new Error('Aufruf: clyde folders --set ORDNER|CHAT NEUER-PFAD [--create] [--dry-run|--yes]');
     const e = F.resolveMissing(list, a[0]);
+    if (e.target) {
+      if (!samePathLocal(e.target, a[1])) throw new Error(`${titles(e)} ${e.chats.length > 1 ? 'sind' : 'ist'} schon auf ${e.target} umgestellt (die App hat den alten Ordner zurueckgeschrieben). Wieder dorthin: clyde folders --reapply "${e.cwd}". Fuer einen anderen Ordner zuerst die Zuordnung mit clyde map --remove entfernen.`);
+      return folders(cfg, { ...opts, set: false, reapply: true, args: [a[0]] }, log);
+    }
     const r = await map(cfg, { ...opts, add: true, args: [e.canonical, a[1]] }, log);
     if (r?.applied) {
-      // Liegt der neue Ordner in einem Git-Repo, gleich in die Verweise eintragen
-      try {
-        const { syncRefs } = await import('./refs.js');
-        await syncRefs(loadConfig(), new Client(cfg.server, cfg.token));
-      } catch { /* kommt mit dem naechsten Push */ }
-      log.info(`Umgestellt: ${e.chats.map((c) => `"${c.title}"`).join(', ')} zeigen jetzt auf ${a[1]}. Die App jetzt neu starten und diese Chats vorher nicht oeffnen, sonst schreibt sie den alten Ordner zurueck.`);
+      await refreshRefs();
+      log.info(`Umgestellt: ${titles(e)} ${e.chats.length > 1 ? 'zeigen' : 'zeigt'} jetzt auf ${a[1]}. ${restartHint}`);
     }
     return { set: r?.applied || false, from: e.cwd, to: a[1], chats: e.chats, needsRestart: !!r?.applied };
   }
-  const out = { missing: list };
+  const out = { missing: list, restartPending: P.prunePending(chats) };
   if (opts.json) { process.stdout.write(JSON.stringify(out, null, 1) + String.fromCharCode(10)); return out; }
-  if (!list.length) { log.info('Alle Chats haben ihren Arbeitsordner auf diesem PC.'); return out; }
-  log.info('Chats ohne Arbeitsordner auf diesem PC:');
-  for (const e of list) log.info(`  ${F.describeMissing(e)}`);
-  log.info('Anlegen: clyde folders --mkdir ORDNER   umstellen: clyde folders --set ORDNER NEUER-PFAD --dry-run');
+  if (!list.length) log.info('Alle Chats haben ihren Arbeitsordner auf diesem PC.');
+  else {
+    log.info('Chats ohne Arbeitsordner auf diesem PC:');
+    for (const e of list) log.info(`  ${F.describeMissing(e)}`);
+    log.info('Anlegen: clyde folders --mkdir ORDNER   umstellen: clyde folders --set ORDNER NEUER-PFAD --dry-run');
+    if (list.some((e) => e.target)) log.info('Zurueckgeschriebene wieder umstellen: clyde folders --reapply ORDNER --dry-run');
+  }
+  if (out.restartPending.length) {
+    log.info('Umgestellt, aber noch nicht bestaetigt, dass die App den neuen Ordner kennt (nach einem Neustart der App erst oeffnen):');
+    for (const p of out.restartPending) log.info(`  ${p.title} -> ${p.cwd}`);
+  }
   return out;
 }
+
+const samePathLocal = (a, b) => {
+  const r = (p) => normalizeHome(path.resolve(String(p).replace(/^["']|["']$/g, '')));
+  return process.platform === 'win32' ? r(a).toLowerCase() === r(b).toLowerCase() : r(a) === r(b);
+};
