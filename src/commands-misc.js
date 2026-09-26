@@ -284,30 +284,51 @@ export async function del(cfg, opts, log) {
 // Git-Repos: anzeigen (gemeinsamer Stand und eigene Auswahl), Kandidaten suchen,
 // auswaehlen oder abwaehlen. Aenderungen wirken mit dem naechsten Push.
 export async function repos(cfg, opts, log) {
-  const { scanRepos, inspectRepo, extraRepos, dropRepos, sanitizeRemote } = await import('./repos.js');
+  const { scanRepos, inspectRepo, extraRepos, dropRepos, ignoredRepos, sanitizeRemote, commitAndPush, pushRepo } = await import('./repos.js');
   const { isUnder } = await import('./remap.js');
   const same = (a, b) => isUnder(a, b) && isUnder(b, a);
-  const raw = { ...cfg.raw, extraRepos: extraRepos(cfg), dropRepos: dropRepos(cfg) };
+  const raw = { ...cfg.raw, extraRepos: extraRepos(cfg), dropRepos: dropRepos(cfg), ignoredRepos: ignoredRepos(cfg) };
+  const argPaths = () => (opts.args || []).map((p) => normalizeHome(path.resolve(p.replace(/^["']|["']$/g, ''))));
+  // Vergessenes nachholen (vom Push-Skill nach Rueckfrage aufgerufen)
+  if (opts.commit) {
+    const r = await commitAndPush(normalizeHome(path.resolve(opts.commit)), opts.message, { force: opts.force });
+    log.info(`${r.root}: ${r.committed ? `committet ("${r.message}") und ` : ''}auf den Remote gepusht (${r.branch}).`);
+    return r;
+  }
+  if (opts.gitPush) {
+    const r = await pushRepo(normalizeHome(path.resolve(opts.gitPush)), { force: opts.force });
+    log.info(`${r.root}: Commits auf den Remote gepusht (${r.branch}).`);
+    return r;
+  }
+  if (opts.ignore) {
+    const paths = argPaths();
+    if (!paths.length) throw new Error('Aufruf: clyde repos --ignore PFAD [PFAD ...]');
+    for (const p of paths) if (!raw.ignoredRepos.some((x) => same(x, p))) raw.ignoredRepos.push(p);
+    saveConfig(raw);
+    log.info(`Wird nicht mehr vorgeschlagen: ${paths.join(' | ')} (mitnehmen jederzeit mit clyde repos --add)`);
+    return { ignored: raw.ignoredRepos };
+  }
   if (opts.scan) {
     const found = await scanRepos(cfg);
     if (!found.length) { log.info('In und direkt unter den Projektordnern deiner Chats liegen keine Git-Repos.'); return { found }; }
     log.info('Git-Repos in und direkt unter den Projektordnern deiner Chats:');
     found.forEach((r, i) => {
-      const state = r.viaChat ? 'automatisch (ein Chat arbeitet darin)' : r.selected ? 'ausgewaehlt' : 'nicht ausgewaehlt';
-      const warn = [!r.remote && 'kein Remote', r.ahead && `${r.ahead} Commit(s) nicht gepusht`, r.dirty && `${r.dirty} Datei(en) nicht committet`].filter(Boolean);
+      const state = r.viaChat ? 'automatisch (ein Chat arbeitet darin)' : r.selected ? 'ausgewaehlt' : raw.ignoredRepos.some((x) => same(x, r.root)) ? 'nicht ausgewaehlt (wird nicht vorgeschlagen)' : 'nicht ausgewaehlt';
+      const warn = [!r.remote && 'kein Remote', r.ahead && `${r.ahead} Commit(s) nicht gepusht`, r.dirty && `${r.dirty} Datei(en) nicht committet`, r.untracked && `${r.untracked} neue Datei(en)`].filter(Boolean);
       log.info(`${String(i + 1).padStart(2)}. ${r.root}  ${r.remote ? sanitizeRemote(r.remote) : '-'}  [${!r.head ? 'leer' : r.branch || 'losgeloest'}]  ${fmtBytes(r.sizeBytes)}  ${state}${warn.length ? `  (${warn.join(', ')})` : ''}`);
     });
     log.info('Auswaehlen: clyde repos --add PFAD [PFAD ...]   abwaehlen: clyde repos --remove PFAD');
     return { found };
   }
   if (opts.add) {
-    const paths = (opts.args || []).map((p) => normalizeHome(path.resolve(p.replace(/^["']|["']$/g, ''))));
+    const paths = argPaths();
     if (!paths.length) throw new Error('Aufruf: clyde repos --add PFAD [PFAD ...]   (Kandidaten: clyde repos --scan)');
     for (const p of paths) {
       const info = fs.existsSync(p) ? await inspectRepo(p) : null;
       if (!info) throw new Error(`${p} ist kein Git-Repo.`);
       if (!info.remote) throw new Error(`${info.root} hat keinen Remote und laesst sich auf anderen PCs nicht klonen.`);
       if (!raw.extraRepos.some((x) => same(x, info.root))) raw.extraRepos.push(info.root);
+      raw.ignoredRepos = raw.ignoredRepos.filter((x) => !same(x, info.root));
       const canon = canonicalize(info.root, cfg.forms);
       raw.dropRepos = raw.dropRepos.filter((d) => d !== canon);
       log.info(`Ausgewaehlt: ${info.root} (${sanitizeRemote(info.remote)})`);

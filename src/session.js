@@ -31,6 +31,7 @@ export function liveSessions() {
       hostSessionId: j.hostSessionId || null,
       status: j.status || 'unbekannt',
       name: j.name || null,
+      cwd: j.cwd || null,
     });
   }
   return out;

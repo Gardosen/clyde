@@ -204,3 +204,54 @@ test('Eigene Auswahl: Repo unter einem Chat-Ordner finden, mitnehmen und wieder 
   assert.equal((loadConfig().raw.dropRepos || []).length, 0, 'Abwahl erledigt');
   assert.ok(fs.existsSync(path.join(F.home, 'work', 'tool', 'tool.txt')), 'vorhandener Klon bleibt');
 });
+
+test('Vor dem Push: Vergessenes erkennen und auf Wunsch nachholen', async () => {
+  const { repos } = await import('../src/commands-misc.js');
+  const { precheck } = await import('../src/repos.js');
+  const TOOL = path.join(A.home, 'work', 'tool');
+  write(path.join(PA, 'README.md'), 'fuenf\n');
+  write(path.join(PA, 'neu2.txt'), 'neu\n');
+  let { items } = await precheck(A.cfg());
+  const work = items.find((i) => i.kind === 'work' && i.name === 'proj');
+  assert.ok(work && work.changed === 1 && work.untracked === 1, JSON.stringify(items));
+  assert.ok(work.files.some((f) => f.includes('neu2.txt')), 'Dateiliste fuer die Rueckfrage');
+  assert.ok(items.some((i) => i.kind === 'new' && i.name === 'tool'), 'abgewaehltes Repo wird wieder vorgeschlagen');
+
+  await repos(A.cfg(), { ignore: true, args: [TOOL] }, quiet);
+  ({ items } = await precheck(A.cfg()));
+  assert.ok(!items.some((i) => i.name === 'tool'), 'ignoriert: nicht mehr vorgeschlagen');
+
+  // ein anderer Chat arbeitet im Repo: nicht committen
+  const sessionFile = path.join(tmp, 'claude', 'sessions', `${process.pid}.json`);
+  write(sessionFile, JSON.stringify({ pid: process.pid, sessionId: 'anderer-chat', status: 'busy', cwd: PA, name: 'Anderer Chat' }));
+  assert.deepEqual((await precheck(A.cfg())).items.find((i) => i.name === 'proj').busyChats, ['"Anderer Chat"']);
+  await assert.rejects(repos(A.cfg(), { commit: PA }, quiet), /arbeitet gerade/);
+  fs.rmSync(sessionFile);
+
+  await repos(A.cfg(), { commit: PA, message: 'Nachgereicht' }, quiet);
+  assert.equal(g(REMOTE, 'log', '-1', '--format=%s', 'main'), 'Nachgereicht', 'committet und auf dem Remote');
+  ({ items } = await precheck(A.cfg()));
+  assert.ok(!items.some((i) => i.kind === 'work' && i.name === 'proj'), 'nichts mehr vergessen');
+
+  // neuer Branch ohne Upstream: --push setzt ihn
+  g(PA, 'checkout', '-b', 'feature');
+  write(path.join(PA, 'f.txt'), 'f\n');
+  g(PA, 'add', '.');
+  g(PA, 'commit', '-m', 'feature');
+  assert.equal((await precheck(A.cfg())).items.find((i) => i.name === 'proj').noUpstream, true);
+  await repos(A.cfg(), { gitPush: PA }, quiet);
+  assert.ok(g(REMOTE, 'branch', '--list', 'feature').includes('feature'));
+  g(PA, 'checkout', 'main');
+
+  // Remote hat neuere Commits: nichts erzwingen, klarer Hinweis
+  const OTHER = path.join(tmp, 'other-clone');
+  g(tmp, 'clone', REMOTE, OTHER);
+  write(path.join(OTHER, 'other.txt'), 'o\n');
+  g(OTHER, 'add', '.');
+  g(OTHER, 'commit', '-m', 'anderswo');
+  g(OTHER, 'push');
+  write(path.join(PA, 'lokal.txt'), 'l\n');
+  g(PA, 'add', '.');
+  g(PA, 'commit', '-m', 'lokal');
+  await assert.rejects(repos(A.cfg(), { gitPush: PA }, quiet), /neuere Commits/);
+});

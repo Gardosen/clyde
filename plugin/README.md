@@ -24,7 +24,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 2. **Node.js 20 or newer** on each computer.
 3. **The Clyde command-line tool** on each computer. `/clyde:setup` checks for it
    and offers to install the pinned release from GitHub:
-   `npm install -g github:Gardosen/clyde#v0.4.4`
+   `npm install -g github:Gardosen/clyde#v0.4.5`
 4. **Claude Code** – the desktop app's Code tab or the terminal. The commands run
    local programs and do not work in claude.ai chat or Cowork.
 
@@ -33,7 +33,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 | Command | What it does |
 |---|---|
 | `/clyde:setup [url] [token] [drive]` | Connects this computer to your backend and registers the current chat as the Clyde chat |
-| `/clyde:push` | Adds new, continued and deleted chats of this computer to the account's collection |
+| `/clyde:push` | Asks about forgotten work first (uncommitted or unpushed Git changes, new repositories), then adds this computer's new, continued and deleted chats to the account's collection |
 | `/clyde:pull` | Fetches chats from the account's other computers and keeps this computer's own chats |
 | `/clyde:status` | Shows the latest snapshot, local changes and chats that are busy |
 | `/clyde:delete [id ...]` | Deletes stored snapshots on the backend after confirmation and frees the space |
@@ -41,7 +41,9 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 
 Git repositories a chat works in are taken along automatically: a pull clones
 them into a missing project folder or fast-forwards a clean clone. Local changes
-are never touched.
+are never touched. Before pushing, `/clyde:push` offers to commit and push Git
+work that has not reached its remote yet; nothing is committed without your
+choice, and never in a repository another chat is working in.
 
 Use a dedicated chat for Clyde. That chat is never synchronised itself. The app
 can stay open; Clyde only waits while another chat is in the middle of an answer.
@@ -66,7 +68,9 @@ Clyde is transparent about its data flow:
 - **Changes** these same folders on `/clyde:pull`, after writing a backup. With
   Git repositories, a pull clones a missing project folder from its remote or
   fast-forwards a clean one; folders with local changes or own commits are never
-  touched (`--no-repos` turns this off).
+  touched (`--no-repos` turns this off). Only when you choose it in
+  `/clyde:push` does it commit (`git add -A`, respecting `.gitignore`) and push
+  in a repository.
 - **Stores** its settings and a hash cache in `~/.clyde`.
 - **Runs** the `clyde` command-line tool, which calls `git` for the repository
   steps above, and `npm install` of the pinned release when you agree to it

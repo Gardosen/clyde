@@ -15,6 +15,8 @@ Befehle
        [--home PFAD] [--clyde-chat] Home-Verzeichnis ueberschreiben; aufrufenden Chat als Clyde-Chat registrieren
   push [--clyde-chat] [--force]     Aenderungen dieses PCs in den gemeinsamen Stand des Kontos
                                     einbringen; Chats anderer PCs bleiben erhalten
+  push --check [--json]             nur pruefen, was vergessen ist (Git-Arbeit nicht auf dem
+                                    Remote, neue Repos, arbeitende Chats)
   pull [--dry-run] [--force]        Neue und geaenderte Chats anderer PCs holen, eigene behalten;
        [--no-ask] [--clyde-chat]    fragt nach Projektordnern, die hier fehlen
        [--create-missing DIR]       fehlende Projektordner unter DIR anlegen (z. B. auf dem Mac)
@@ -31,6 +33,9 @@ Befehle
   repos --scan                      Git-Repos in und unter den Projektordnern der Chats finden
   repos --add PFAD [PFAD ...]       Repo mitnehmen (wirkt mit dem naechsten Push)
   repos --remove PFAD               Repo abwaehlen (naechster Push nimmt es aus dem Stand)
+  repos --ignore PFAD [PFAD ...]    Repo nicht mehr vorschlagen
+  repos --commit PFAD [-m TEXT]     alles committen und auf den Remote pushen
+  repos --push PFAD                 Commits auf den Remote pushen (ohne Upstream mit -u)
   list                              Staende auf dem Server mit frei werdendem Speicher
   doctor                            Pfade, Platzhalter, Prozesse und Server pruefen
   delete ID [ID ...]                Staende auf dem Server loeschen und aufraeumen; neuester
@@ -91,6 +96,12 @@ try {
       rehash: { type: 'boolean', default: false },
       'no-repos': { type: 'boolean', default: false },
       scan: { type: 'boolean', default: false },
+      check: { type: 'boolean', default: false },
+      json: { type: 'boolean', default: false },
+      commit: { type: 'string' },
+      push: { type: 'string' },
+      message: { type: 'string', short: 'm' },
+      ignore: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -114,7 +125,8 @@ const opts = {
   remove: values.remove, add: values.add, list: values.list, clydeChat: values['clyde-chat'],
   plan: expandHome(values.plan), chat: values.chat, to: expandHome(values.to), undo: expandHome(values.undo),
   exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
-  force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, noRepos: values['no-repos'], scan: values.scan, verbose: values.verbose,
+  force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, noRepos: values['no-repos'], scan: values.scan, check: values.check, json: values.json,
+  commit: expandHome(values.commit), gitPush: expandHome(values.push), message: values.message, ignore: values.ignore, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
 const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos };

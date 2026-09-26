@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { canonicalize, localize, normalizeHome } from './rewrite.js';
-import { pathBelongsTo } from './session.js';
+import { pathBelongsTo, liveSessions, ownSession, describeSession } from './session.js';
 import { isUnder } from './remap.js';
 
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
@@ -102,12 +102,15 @@ export async function inspectRepo(dir) {
   const remote = name ? (await run('remote', 'get-url', name)).out : null;
   const branch = (await run('rev-parse', '--abbrev-ref', 'HEAD')).out || null;
   const head = (await run('rev-parse', 'HEAD')).out || null;
-  const status = await run('status', '--porcelain', '--untracked-files=no');
+  const status = await run('status', '--porcelain');
+  const lines = status.ok ? status.out.split('\n').map((l) => l.replace(/\r$/, '')).filter(Boolean) : [];
   const upstream = await run('rev-parse', '--abbrev-ref', '@{u}');
   const count = async (range) => { const r = await run('rev-list', '--count', range); return r.ok ? Number(r.out) : null; };
   return {
-    root, rootAbs, remote, branch: branch === 'HEAD' ? null : branch, head,
-    dirty: status.ok ? status.out.split('\n').filter(Boolean).length : 0,
+    root, rootAbs, remote, remoteName: name || null, branch: branch === 'HEAD' ? null : branch, head,
+    dirty: lines.filter((l) => !l.startsWith('??')).length, // geaenderte, versionierte Dateien
+    untracked: lines.filter((l) => l.startsWith('??')).length, // neue, noch nicht versionierte
+    files: lines.slice(0, 12),
     upstream: upstream.ok ? upstream.out : null,
     ahead: upstream.ok ? await count('@{u}..HEAD') : null,
     behind: upstream.ok ? await count('HEAD..@{u}') : null,
@@ -282,4 +285,80 @@ export async function applyRepos(actions, log) {
   for (const s of res.skipped) log.info(`  uebersprungen: ${s}`);
   if (res.failed.length) log.warn('Fuer Klonen und Holen braucht dieser PC Zugriff auf die Remotes (SSH-Schluessel oder Git-Anmeldung).');
   return res;
+}
+
+// Chats, die gerade in diesem Repo arbeiten (ausser dem aufrufenden): dort nie
+// committen oder pushen, der Chat koennte mitten in einer Aenderung stecken
+export function busyInRepo(root) {
+  const own = ownSession();
+  return liveSessions().filter((s) => s.sessionId !== own?.sessionId && s.status !== 'idle' && s.cwd && isUnder(s.cwd, root)).map(describeSession);
+}
+
+// Nicht mehr vorschlagen (bei /clyde:push "nicht mitnehmen" gewaehlt), lokale Pfade
+export const ignoredRepos = (cfg) => (Array.isArray(cfg.raw?.ignoredRepos) ? cfg.raw.ignoredRepos.filter((p) => typeof p === 'string' && p) : []);
+
+// Vor dem Push: was ist vergessen? Repos, die Clyde mitnimmt, mit Arbeit, die
+// nicht auf dem Remote liegt, und neu gefundene Repos, ueber die noch nicht
+// entschieden ist. Liest nur.
+export async function precheck(cfg) {
+  if (cfg.raw?.repos === false || !(await gitAvailable())) return { items: [] };
+  const found = await scanRepos(cfg);
+  const ignored = ignoredRepos(cfg);
+  const items = [];
+  for (const r of found) {
+    const taken = r.viaChat || r.selected;
+    if (taken) {
+      const noUpstream = !!(r.branch && r.head && r.remote && !r.upstream);
+      if (r.dirty || r.untracked || r.ahead || noUpstream || !r.remote) {
+        items.push({
+          kind: 'work', repo: r.root, name: path.basename(r.root), remote: r.remote ? sanitizeRemote(r.remote) : null, branch: r.branch,
+          upstream: r.upstream, changed: r.dirty, untracked: r.untracked, ahead: r.ahead || 0, noUpstream, noRemote: !r.remote, files: r.files,
+          busyChats: busyInRepo(r.root),
+        });
+      }
+    } else if (r.remote && !ignored.some((p) => isUnder(p, r.root) && isUnder(r.root, p))) {
+      items.push({ kind: 'new', repo: r.root, name: path.basename(r.root), remote: sanitizeRemote(r.remote), branch: r.branch, sizeBytes: r.sizeBytes });
+    }
+  }
+  return { items };
+}
+
+// Commits auf den Remote bringen; ohne Upstream mit -u. Kein Zusammenfuehren,
+// kein Ueberschreiben: hat der Remote neuere Commits, bricht es mit Hinweis ab.
+export async function pushRepo(dir, { force = false } = {}) {
+  const info = await inspectRepo(dir);
+  if (!info) throw new Error(`${dir} ist kein Git-Repo.`);
+  const busy = busyInRepo(info.root);
+  if (busy.length && !force) throw new Error(`${info.root}: Darin arbeitet gerade ${busy.join(', ')}; spaeter erneut.`);
+  if (!info.remoteName) throw new Error(`${info.root} hat keinen Remote.`);
+  if (!info.branch) throw new Error(`${info.root}: kein Branch ausgecheckt (losgeloester HEAD).`);
+  const r = info.upstream ? await git(['-C', info.root, 'push'], { timeout: 0 }) : await git(['-C', info.root, 'push', '-u', info.remoteName, info.branch], { timeout: 0 });
+  if (!r.ok) {
+    if (/rejected|non-fast-forward|fetch first/i.test(r.err)) throw new Error(`${info.root}: Der Remote hat neuere Commits. Erst im Repo holen und zusammenfuehren (git pull), dann erneut.`);
+    throw new Error(`${info.root}: git push fehlgeschlagen: ${firstLine(r.err)}`);
+  }
+  return { root: info.root, branch: info.branch };
+}
+
+// Alles committen (git add -A beachtet .gitignore) und pushen
+export async function commitAndPush(dir, message, { force = false } = {}) {
+  const info = await inspectRepo(dir);
+  if (!info) throw new Error(`${dir} ist kein Git-Repo.`);
+  const busy = busyInRepo(info.root);
+  if (busy.length && !force) throw new Error(`${info.root}: Darin arbeitet gerade ${busy.join(', ')}; nicht committet.`);
+  if (!info.branch) throw new Error(`${info.root}: kein Branch ausgecheckt (losgeloester HEAD).`);
+  for (const ref of ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD']) {
+    if ((await git(['-C', info.root, 'rev-parse', '-q', '--verify', ref])).ok) throw new Error(`${info.root}: Es laeuft gerade ein Merge oder Rebase; bitte erst im Repo abschliessen.`);
+  }
+  const msg = String(message || '').trim() || `Stand von ${os.hostname()} (${new Date().toISOString().slice(0, 16).replace('T', ' ')}), ueber Clyde`;
+  let committed = false;
+  if (info.dirty || info.untracked) {
+    const a = await git(['-C', info.root, 'add', '-A']);
+    if (!a.ok) throw new Error(`${info.root}: git add fehlgeschlagen: ${firstLine(a.err)}`);
+    const c = await git(['-C', info.root, 'commit', '-m', msg], { timeout: 0 });
+    if (!c.ok) throw new Error(`${info.root}: git commit fehlgeschlagen: ${firstLine(c.err || c.out)}`);
+    committed = true;
+  }
+  const p = await pushRepo(info.root, { force });
+  return { ...p, committed, message: committed ? msg : null };
 }

@@ -66,7 +66,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | Command | What it does |
 |---|---|
 | `/clyde:setup [url] [token] [drive]` | Checks the CLI, stores server address and token, registers the chat as the Clyde chat |
-| `/clyde:push` | Adds this computer's changes to the account's collection |
+| `/clyde:push` | First asks about anything forgotten (uncommitted or unpushed Git work, new repositories) so you can catch up, then adds this computer's changes to the account's collection |
 | `/clyde:pull` | Fetches new and changed chats from the other computers; asks about missing project folders |
 | `/clyde:status` | Latest snapshot, what is waiting to be pushed or pulled, busy chats |
 | `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
@@ -315,6 +315,22 @@ and lets you pick them. A selection takes effect with the next push. Every
 selected repository is cloned on all computers of the account. After you
 deselect one, the next push removes it from the shared state. Existing clones
 stay, but are no longer updated.
+
+**Before every push, `/clyde:push` checks for forgotten work.**
+- For each repository Clyde takes along that has uncommitted changes, new files,
+  unpushed commits or a branch without upstream, it asks what to do: commit
+  and push (the changed files are listed, and you may type your own commit
+  message), only push the commits, skip, or cancel the push.
+- For newly found repositories, it asks which ones every computer should take
+  along. The ones you do not choose are not suggested again.
+- Nothing is committed or pushed without your choice. A repository in which
+  another chat is working at that moment is never committed. If the remote
+  already has newer commits, Clyde stops for that repository and tells you,
+  instead of merging on its own.
+
+In the terminal the same check is `clyde push --check`, and you catch up with
+`clyde repos --commit PATH [-m TEXT]`, `clyde repos --push PATH`,
+`clyde repos --add PATH` or `clyde repos --ignore PATH`.
 
 For every repository:
 

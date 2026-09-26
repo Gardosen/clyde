@@ -6,7 +6,7 @@ import { Client } from './client.js';
 import { buildLocalManifest, manifestRoots } from './scan.js';
 import { planRestore } from './diff.js';
 import { applyPlan } from './restore.js';
-import { checkGuard } from './guard.js';
+import { checkGuard, busyOtherSessions } from './guard.js';
 import { liveSessions, ownSession, sessionIds, pathBelongsTo, describeSession } from './session.js';
 import { chunkStream, canonicalSource } from './chunker.js';
 import { lastSnapshotPath, claudeHome, clydeHome } from './paths.js';
@@ -80,10 +80,36 @@ async function* missingChunks(local, missing) {
 
 export async function push(cfg, opts, log) {
   if (opts.clydeChat) cfg = registerClydeChat(cfg, log);
+  if (opts.check) return pushCheck(cfg, opts, log);
   checkGuard('Push', opts.force, log);
   const r = await syncPush(cfg, opts, log);
   saveLast({ id: r.id, createdAt: new Date().toISOString(), direction: 'push' });
   return r;
+}
+
+// Vor dem Push: Vergessenes auflisten (Git-Arbeit, die nicht auf dem Remote liegt,
+// neu gefundene Repos) und arbeitende Chats. --json fuer den Push-Skill, der daraus
+// Rueckfragen macht. Aendert nichts.
+async function pushCheck(cfg, opts, log) {
+  const { precheck } = await import('./repos.js');
+  const { items } = opts.noRepos ? { items: [] } : await precheck(cfg);
+  const own = ownSession();
+  const busy = own ? busyOtherSessions(own).map(describeSession) : [];
+  const result = { items, busy };
+  if (opts.json) { process.stdout.write(`${JSON.stringify(result, null, 1)}
+`); return result; }
+  if (!items.length) log.info('Nichts vergessen: alle Git-Repos, die Clyde mitnimmt, liegen vollstaendig auf ihrem Remote.');
+  else log.info('Vor dem Push pruefen:');
+  for (const it of items) {
+    if (it.kind === 'new') { log.info(`  Neues Git-Repo ${it.name} (${it.repo}), ${fmtBytes(it.sizeBytes)}, noch nicht ausgewaehlt`); continue; }
+    const parts = [it.changed && `${it.changed} geaenderte Datei(en)`, it.untracked && `${it.untracked} neue Datei(en)`, it.ahead && `${it.ahead} Commit(s) nicht gepusht`,
+      it.noUpstream && `Branch ${it.branch} hat keinen Upstream`, it.noRemote && 'kein Remote'].filter(Boolean);
+    log.info(`  Git ${it.name} (${it.repo}): ${parts.join(', ')}${it.busyChats?.length ? ` - darin arbeitet gerade ${it.busyChats.join(', ')}` : ''}`);
+    for (const f of it.files || []) log.info(`      ${f}`);
+  }
+  if (items.length) log.info('Nachholen: clyde repos --commit PFAD [--message TEXT] | --push PFAD | --add PFAD | --ignore PFAD');
+  if (busy.length) log.info(`Arbeiten gerade (blockieren den Push): ${busy.join(', ')}`);
+  return result;
 }
 
 async function ttyAsk(question) {
