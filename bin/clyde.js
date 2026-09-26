@@ -6,7 +6,7 @@ import { log } from '../src/log.js';
 import { push, pull } from '../src/commands.js';
 import { mergeSnapshots } from '../src/sync.js';
 import { update } from '../src/update.js';
-import { init, map, list, status, doctor, gc, del, relocate, repos, groups, refs, link } from '../src/commands-misc.js';
+import { init, map, list, status, doctor, gc, del, relocate, repos, groups, refs, link, folders } from '../src/commands-misc.js';
 
 const HELP = `clyde - synchronisiert den Zustand der Claude-Desktop-App-Chats zwischen PCs
 
@@ -43,6 +43,10 @@ Befehle
   refs --skip REPO                  Repo auf diesem Geraet nicht mehr anbieten
   refs --link CHAT REPO|PFAD        Chat von Hand einem Repo zuordnen; ein Pfad nimmt das Repo
                                     neu auf (--unlink CHAT loest es)
+  folders [--json]                  Chats, deren Arbeitsordner es hier nicht gibt
+  folders --mkdir ORDNER|CHAT       den fehlenden Ordner leer anlegen (Chat laeuft sofort weiter)
+  folders --set ORDNER|CHAT PFAD    Chats auf einen vorhandenen Ordner umstellen (--dry-run/--yes;
+                                    wirkt nach einem Neustart der App)
   link [PFAD|REPO] [--unlink]       den aufrufenden Chat der App einem Repo zuordnen (/clyde:link);
                                     ohne Angabe: zeigen, womit er verknuepft ist
   repos --commit PFAD [-m TEXT]     alles committen und auf den Remote pushen
@@ -120,6 +124,7 @@ try {
       link: { type: 'boolean', default: false },
       unlink: { type: 'boolean', default: false },
       pending: { type: 'boolean', default: false },
+      mkdir: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -145,10 +150,10 @@ const opts = {
   exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
   force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, noRepos: values['no-repos'], scan: values.scan, check: values.check, json: values.json,
   commit: expandHome(values.commit), gitPush: expandHome(values.push), message: values.message, ignore: values.ignore, done: values.done,
-  set: values.set, clone: values.clone, skip: values.skip, link: values.link, unlink: values.unlink, pending: values.pending, verbose: values.verbose,
+  set: values.set, clone: values.clone, skip: values.skip, link: values.link, unlink: values.unlink, pending: values.pending, mkdir: values.mkdir, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
-const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups, update, refs, link };
+const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups, update, refs, link, folders };
 
 try {
   const fn = commands[cmd];

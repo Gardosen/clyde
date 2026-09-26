@@ -432,3 +432,41 @@ export async function link(cfg, opts, log) {
   }
   return r;
 }
+
+// clyde folders [--json] | --mkdir ORDNER|CHAT | --set ORDNER|CHAT NEUER-PFAD [--create] [--dry-run|--yes]
+// Chats, deren Arbeitsordner es hier nicht gibt: anzeigen, Ordner anlegen oder
+// auf einen vorhandenen Ordner umstellen (ohne dass die App eine Kopie anlegt).
+export async function folders(cfg, opts, log) {
+  const F = await import('./folders.js');
+  const list = await F.missingFolders(cfg);
+  const a = opts.args || [];
+  if (opts.mkdir) {
+    if (!a[0]) throw new Error('Aufruf: clyde folders --mkdir ORDNER|CHAT');
+    const e = F.resolveMissing(list, a[0]);
+    if (!e.creatable) throw new Error(`${e.cwd} laesst sich hier nicht anlegen (Laufwerk fehlt oder Platzhalter). Stattdessen umstellen: clyde folders --set "${e.cwd}" PFAD`);
+    fs.mkdirSync(e.cwd, { recursive: true });
+    log.info(`Ordner angelegt: ${e.cwd}. ${e.chats.map((c) => `"${c.title}"`).join(', ')} laufen damit sofort weiter (Chat notfalls neu anklicken).`);
+    return { created: e.cwd, chats: e.chats };
+  }
+  if (opts.set) {
+    if (a.length < 2) throw new Error('Aufruf: clyde folders --set ORDNER|CHAT NEUER-PFAD [--create] [--dry-run|--yes]');
+    const e = F.resolveMissing(list, a[0]);
+    const r = await map(cfg, { ...opts, add: true, args: [e.canonical, a[1]] }, log);
+    if (r?.applied) {
+      // Liegt der neue Ordner in einem Git-Repo, gleich in die Verweise eintragen
+      try {
+        const { syncRefs } = await import('./refs.js');
+        await syncRefs(loadConfig(), new Client(cfg.server, cfg.token));
+      } catch { /* kommt mit dem naechsten Push */ }
+      log.info(`Umgestellt: ${e.chats.map((c) => `"${c.title}"`).join(', ')} zeigen jetzt auf ${a[1]}. Die App jetzt neu starten und diese Chats vorher nicht oeffnen, sonst schreibt sie den alten Ordner zurueck.`);
+    }
+    return { set: r?.applied || false, from: e.cwd, to: a[1], chats: e.chats, needsRestart: !!r?.applied };
+  }
+  const out = { missing: list };
+  if (opts.json) { process.stdout.write(JSON.stringify(out, null, 1) + String.fromCharCode(10)); return out; }
+  if (!list.length) { log.info('Alle Chats haben ihren Arbeitsordner auf diesem PC.'); return out; }
+  log.info('Chats ohne Arbeitsordner auf diesem PC:');
+  for (const e of list) log.info(`  ${F.describeMissing(e)}`);
+  log.info('Anlegen: clyde folders --mkdir ORDNER   umstellen: clyde folders --set ORDNER NEUER-PFAD --dry-run');
+  return out;
+}

@@ -72,6 +72,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
 | `/clyde:refs` | Show and correct which repository belongs to which chat and where it lives on each device |
 | `/clyde:link [path \| --remove]` | Typed in any chat (not the Clyde chat): links that chat to a Git repository, also one that is not in the references yet |
+| `/clyde:folders` | Repairs chats whose working folder does not exist on this computer, without the app creating a "(fork)" copy: create the folder, or switch the chats to an existing folder |
 | `/clyde:update` | Updates the Clyde plugin in the app and the Clyde CLI to the latest release, after asking |
 | `/clyde:groups` | Apply the chat list groups (including renamed ones), pinned chats and chat titles of the other computers in the app, without a restart (also done at the end of `/clyde:pull`) |
 
@@ -372,6 +373,25 @@ Clyde never asks for passwords. Only common remote addresses are cloned (https,
 ssh, git, `user@host:path`, absolute paths). Turn all of this off with
 `--no-repos`, or permanently with `"repos": false` in `~/.clyde/config.json`.
 References need server 0.6.0 or newer.
+
+## Chats whose working folder is missing
+
+If a chat's working folder does not exist on this computer (for example because
+the chat comes from another computer), the Claude app blocks it ("Working folder
+no longer exists"). Choosing a folder there makes the app create a copy titled
+"(fork)" without a group and archive the original. Clyde avoids that from the
+Clyde chat with `/clyde:folders` (or `clyde folders`):
+
+- **Create the folder** (`clyde folders --mkdir FOLDER`): the expected folder is
+  created empty, and the chat continues at once.
+- **Switch to an existing folder** (`clyde folders --set FOLDER PATH --dry-run`,
+  then `--yes`): the chats of that folder point to PATH from now on (a mapping
+  like `clyde map --add`). Only their files change. If PATH is a Git repository,
+  it is added to the references at once. The running app only sees the change
+  after a restart; do not open those chats before, or the app writes the old
+  folder back.
+
+`/clyde:pull` runs the same check after pulling.
 
 ## Moving chats to a different project folder
 

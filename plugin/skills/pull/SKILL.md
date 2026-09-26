@@ -103,6 +103,13 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
    zuruecksetzen oder ueberschreiben. Warnungen zu Verweisen (Repo fehlt hier)
    weitergeben, falls sie in Schritt 1b uebersprungen wurden.
 
+5b. **Fehlende Arbeitsordner:** `clyde folders --json`. Stehen dort Chats, deren
+   Ordner es hier nicht gibt, genau wie im Skill `/clyde:folders` je Ordner fragen
+   (anlegen / auf vorhandenen Ordner umstellen mit Trockenlauf und Bestaetigung /
+   ueberspringen). Das verhindert, dass die App beim Oeffnen eine Kopie „(fork)"
+   anlegt. Wurde etwas umgestellt, im Bericht sagen, dass die App danach neu
+   gestartet werden muss und diese Chats vorher nicht geoeffnet werden sollen.
+
 6. **Seitenleiste abgleichen** (nur wenn der Pull nicht abgebrochen wurde; nur in
    der App, im Terminal ueberspringen): genau wie im Skill `/clyde:groups`:
    - `clyde groups --json` liefert `renames`, `groups` (Name, `groupId`,
