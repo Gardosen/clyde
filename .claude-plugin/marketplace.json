@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Clyde: sync your Claude desktop app chats between computers. Backend, CLI and plugin: https://github.com/Gardosen/clyde",
-    "version": "0.4.7"
+    "version": "0.4.8"
   },
   "plugins": [
     {
       "name": "clyde",
       "source": "./plugin",
       "description": "Sync your Claude desktop app chats across your computers: /clyde:push adds this computer's chats to your account, /clyde:pull fetches the others; existing chats are kept. Needs your own Clyde backend (Docker), Node.js 20 and the Clyde CLI. Works in Claude Code only.",
-      "version": "0.4.7",
+      "version": "0.4.8",
       "author": {
         "name": "Gardosen",
         "url": "https://github.com/Gardosen"

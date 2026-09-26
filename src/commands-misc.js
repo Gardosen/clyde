@@ -14,7 +14,7 @@ import { loadLast, registerClydeChat } from './commands.js';
 import { planRelocation, applyRelocation, undoRelocation } from './relocate.js';
 import { fetchLatest, prepare, describe } from './sync.js';
 import { changeMapping } from './remap.js';
-import { versionNotes } from './version.js';
+import { versionNotes, versionLine } from './version.js';
 import { loadBase } from './merge.js';
 import { configFromRaw } from './config.js';
 import { fmtBytes } from './log.js';
@@ -91,7 +91,7 @@ async function checkServer(server, token, log) {
   try {
     const h = await c.health();
     const vn = versionNotes(h);
-    log.info(`Clyde ${vn.client} (dieser PC), Server ${vn.server || 'unbekannt'}`);
+    log.info(versionLine(vn));
     for (const n of vn.notes) log.warn(n.text);
     if (h?.service !== 'clyde') { log.warn(`${server} antwortet, ist aber kein Clyde-Server.`); return false; }
   } catch (e) {
@@ -163,7 +163,7 @@ export async function list(cfg, opts, log) {
 export async function status(cfg, opts, log) {
   const client = new Client(cfg.server, cfg.token);
   const v = versionNotes(await client.health());
-  log.info(`Clyde ${v.client} (dieser PC), Server ${v.server || 'unbekannt'}${v.notes.length ? '' : ' - aktuell'}`);
+  log.info(versionLine(v));
   for (const n of v.notes) log.warn(n.text);
   const last = loadLast();
   const { snapshots } = await client.listSnapshots();

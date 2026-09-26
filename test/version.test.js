@@ -46,11 +46,11 @@ test('Versionen vergleichen', () => {
   assert.deepEqual(versionNotes({ version: 'unbekannt' }).notes, [], 'unbekannte Serverversion: kein Hinweis');
 });
 
-test('status meldet einen veralteten Client mit dem passenden Installationsbefehl', async () => {
+test('status meldet einen veralteten Client und empfiehlt clyde update', async () => {
   const { out, log } = collect();
   await status(cfgFor(await serverWith({ version: '9.9.9' })), {}, log);
   assert.ok(out[0].includes(`Clyde ${CLIENT_VERSION}`) && out[0].includes('Server 9.9.9'), out[0]);
-  assert.ok(out.some((l) => l.startsWith('WARN') && l.includes('veraltet') && l.includes('#v9.9.9')), out.join('\n'));
+  assert.ok(out.some((l) => l.startsWith('WARN') && l.includes('veraltet') && l.includes('clyde update')), out.join('\n'));
 });
 
 test('status und push melden einen veralteten Server', async () => {

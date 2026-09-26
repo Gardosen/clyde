@@ -24,7 +24,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 2. **Node.js 20 or newer** on each computer.
 3. **The Clyde command-line tool** on each computer. `/clyde:setup` checks for it
    and offers to install the pinned release from GitHub:
-   `npm install -g github:Gardosen/clyde#v0.4.7`
+   `npm install -g github:Gardosen/clyde#v0.4.8`
 4. **Claude Code** – the desktop app's Code tab or the terminal. The commands run
    local programs and do not work in claude.ai chat or Cowork.
 
@@ -38,6 +38,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 | `/clyde:status` | Shows the latest snapshot, local changes and chats that are busy |
 | `/clyde:delete [id ...]` | Deletes stored snapshots on the backend after confirmation and frees the space |
 | `/clyde:repos` | Chooses which Git repositories every computer clones and keeps up to date |
+| `/clyde:update` | Updates this plugin and the Clyde CLI to the latest release, after asking |
 | `/clyde:groups` | Files chats into the same sidebar groups as on your other computers, using the app's sidebar tools (no restart; also part of `/clyde:pull`) |
 
 Git repositories a chat works in are taken along automatically: a pull clones
@@ -65,7 +66,9 @@ Clyde is transparent about its data flow:
   enter in `/clyde:setup`, authenticated with your token. Nothing goes anywhere
   else. Chat transcripts contain everything written in them, including file
   paths, code and command output. Git remote addresses are sent without any
-  credentials; project files themselves are never sent.
+  credentials; project files themselves are never sent. `/clyde:update` (and
+  `clyde update`) additionally asks github.com for the latest release and
+  downloads it through Claude's plugin commands and npm.
 - **Changes** these same folders on `/clyde:pull`, after writing a backup. With
   Git repositories, a pull clones a missing project folder from its remote or
   fast-forwards a clean one; folders with local changes or own commits are never

@@ -1,6 +1,6 @@
 {
   "name": "clyde",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Synchronisiert den exakten Zustand der Claude-Desktop-App-Chats zwischen PCs: Backend (Docker Compose), CLI-Client und Claude-Plugin.",
   "type": "module",
   "bin": {

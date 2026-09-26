@@ -71,6 +71,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | `/clyde:status` | Latest snapshot, what is waiting to be pushed or pulled, busy chats |
 | `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
 | `/clyde:repos` | Choose which Git repositories every computer clones and keeps up to date |
+| `/clyde:update` | Updates the Clyde plugin in the app and the Clyde CLI to the latest release, after asking |
 | `/clyde:groups` | Apply the chat list groups of the other computers in the app, without a restart (also done at the end of `/clyde:pull`) |
 
 How it behaves:
@@ -281,7 +282,8 @@ placeholders, running chats and whether server and token work.
 | `clyde pull --create-missing DIR` | Also create missing project folders under DIR (for example on a Mac) |
 | `clyde pull ID --exact` | Restore a stored snapshot exactly; local differences are removed |
 | `clyde merge ID ID [...]` | Merge stored snapshots into a new shared state |
-| `clyde status` | Versions of Clyde and the server, what is waiting to be pushed or pulled, busy chats |
+| `clyde status` | Versions of the Clyde CLI, the plugin and the server, what is waiting to be pushed or pulled, busy chats |
+| `clyde update [--check] [--yes]` | Update the plugin in the app (through Claude's plugin commands) and the CLI (npm) to the latest release on GitHub |
 | `clyde list` | Snapshots on the server, with the space deleting each would free |
 | `clyde map --list` | Show project mappings |
 | `clyde map --add NEUTRAL PATH [--create]` | Add a mapping; check with `--dry-run`, confirm with `--yes` |
@@ -425,11 +427,16 @@ output names the backup folder.
 
 ## Limitations
 
-- **Versions:** `clyde status`, `clyde doctor`, push and pull compare the Clyde
-  version on this computer with the server's version and name the command to
-  update whichever side is older. If the server requires a newer client, push and
-  pull stop until this computer is updated. The plugin in the app is updated
-  separately, in the app.
+- **Versions:** `clyde status`, `clyde doctor`, push and pull compare the
+  versions of the Clyde CLI, the Clyde plugin in the app and the server, and say
+  which side is outdated. `clyde update` (or `/clyde:update`) brings the plugin
+  and the CLI to the latest release. It asks github.com for the latest tag, runs
+  `claude plugin update clyde@clyde` and `npm install -g github:Gardosen/clyde#vX`,
+  and never overwrites a development install (`npm link` to a Git checkout). If
+  the marketplace asks to confirm a command, Clyde does not confirm it and points
+  you to the app. New plugin commands show up in new chats. The server is
+  updated on the server. If the server requires a newer client, push and pull
+  stop until this computer is updated.
 - **Other operating systems:** paths inside old tool output keep the source
   computer's spelling (for example `\` instead of `/` on a Mac). Project folders
   and the chat list are converted correctly through the mappings.
