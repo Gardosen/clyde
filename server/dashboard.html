@@ -12,6 +12,7 @@
   [hidden] { display:none !important; }
   header { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0; z-index:2; }
   header h1 { font-size:16px; margin:0 8px 0 0; }
+  h1 .version { font-size:12px; font-weight:500; margin-left:4px; }
   nav { display:flex; gap:4px; flex-wrap:wrap; }
   nav button { border:none; background:none; padding:6px 10px; border-radius:6px; color:var(--muted); }
   nav button.on { background:var(--accent-bg); color:var(--fg); font-weight:600; }
@@ -69,7 +70,7 @@
 <body>
 
 <section id="login" class="card" hidden>
-  <h1 style="font-size:18px;margin:4px 0 2px">Clyde</h1>
+  <h1 style="font-size:18px;margin:4px 0 2px">Clyde <span class="version muted" title="Version des Clyde-Servers"></span></h1>
   <div class="muted">Anmeldung zum Dashboard</div>
   <form id="loginForm">
     <label for="lu">Benutzername</label><input id="lu" autocomplete="username" required>
@@ -81,7 +82,7 @@
 
 <div id="app" hidden>
 <header>
-  <h1>Clyde</h1>
+  <h1>Clyde <span class="version muted" title="Version des Clyde-Servers"></span></h1>
   <nav id="tabs">
     <button data-tab="chats" class="on">Chats</button>
     <button data-tab="access">Zugang fuer PCs</button>
@@ -596,6 +597,10 @@ $('#userForm').addEventListener('submit', async (ev) => {
   } catch (e) { say($('#userMsg'), e.message); }
 });
 
+// Version des Servers in Kopfzeile und Anmeldung (/health braucht keine Anmeldung)
+fetch('/health').then((r) => r.json()).then((h) => {
+  if (h && h.version) document.querySelectorAll('.version').forEach((el) => { el.textContent = 'v' + h.version; });
+}).catch(() => {});
 start().then(() => { if (!me) showLogin(); });
 </script>
 </body>
