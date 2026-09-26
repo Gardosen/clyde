@@ -53,7 +53,7 @@ export async function localChats(cfg) {
       if (!e.name.startsWith('local_') || !e.name.endsWith('.json') || pathBelongsTo(e.name, cfg.exclude || [])) continue;
       try {
         const j = JSON.parse(await fs.promises.readFile(p, 'utf8'));
-        out.push({ id: e.name.slice(0, -5), title: j.title || e.name.slice(0, -5), cwd: typeof j.cwd === 'string' && j.cwd ? normalizeHome(j.cwd) : null });
+        out.push({ id: e.name.slice(0, -5), title: j.title || e.name.slice(0, -5), cliSessionId: typeof j.cliSessionId === 'string' ? j.cliSessionId : null, cwd: typeof j.cwd === 'string' && j.cwd ? normalizeHome(j.cwd) : null });
       } catch { /* kein Eintrag */ }
     }
   };

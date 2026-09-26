@@ -162,7 +162,7 @@ export function decide(L, R, B) {
     const ls = sigOf(l), rs = sigOf(r), bs = B.has(k) ? B.get(k) : null;
     const { root, p } = splitKey(k);
     let d;
-    if (ls === rs) d = { merged: r || l, local: 'none', kind: 'same' };
+    if (ls === rs) d = { merged: r && l && r.n === undefined && l.n !== undefined ? { ...r, n: l.n } : r || l, local: 'none', kind: 'same' };
     else if (ls === bs) d = { merged: r, local: r ? 'write' : 'delete', kind: r ? 'remote' : 'remote-delete' };
     else if (rs === bs) d = { merged: l, local: 'none', kind: l ? 'local' : 'local-delete' };
     else if (l && r && (unionable(p) || isSidebarEntry(root, p))) d = { merged: null, local: 'write', kind: 'union', union: true };

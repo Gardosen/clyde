@@ -179,7 +179,7 @@ export async function applyPlan({ cfg, local, plan, client, opts, log, extra }) 
     await fs.promises.rename(tmp, f.abs);
     await fs.promises.utimes(f.abs, new Date(), new Date(f.m));
     const st = await fs.promises.stat(f.abs);
-    cache[`${root.path}|${f.lp}`] = { s: st.size, m: st.mtimeMs, ct: st.ctimeMs, c: f.c, cs: f.s, fk: forms.length ? fkAll : '-', st: false };
+    cache[`${root.path}|${f.lp}`] = { s: st.size, m: st.mtimeMs, ct: st.ctimeMs, c: f.c, cs: f.s, fk: forms.length ? fkAll : '-', st: false, n: f.n };
     log.debug(`geschrieben ${f.root}/${f.lp}`);
   }
 

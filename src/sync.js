@@ -4,13 +4,14 @@ import os from 'node:os';
 import { Client } from './client.js';
 import { buildLocalManifest, absFor, formsFor } from './scan.js';
 import { applyPlan } from './restore.js';
-import { canonicalSource, chunkStream } from './chunker.js';
+import { canonicalSource, chunkStream, countLines } from './chunker.js';
 import { localize } from './rewrite.js';
 import { pathBelongsTo } from './session.js';
 import { readAppGroups, reconcileGroups, loadGroupLinks, saveGroupLinks } from './appgroups.js';
 import { loadBase, saveBase, flatten, decide, unionLines, chunksOf, sigOf, isSidebarEntry, mergeEntry, loadBaseEntries } from './merge.js';
 import { fmtBytes } from './log.js';
-import { syncRefs, describeProblem } from './refs.js';
+import { syncRefs, describeProblem, localChats } from './refs.js';
+import { buildPushReport, formatReport, reportEmpty, saveReportTime } from './report.js';
 import { checkVersions } from './version.js';
 
 // v3 (0.4.2): woertliche Platzhalter im Inhalt sind maskiert (@@CLYDE_ESC_).
@@ -56,14 +57,14 @@ async function resolveUnions(decisions, getA, getB, getBase = null) {
       const buf = (aNewer ? mergeEntry(a, b, base) : mergeEntry(b, a, base)) || (aNewer ? a : b);
       const chunks = await chunksOf(buf);
       for (const c of chunks) extra.set(c.hash, c.data);
-      d.merged = { root: d.root, p: d.p, s: buf.length, m: Math.max(d.l.m || 0, d.r.m || 0), c: chunks.map((c) => c.hash) };
+      d.merged = { root: d.root, p: d.p, s: buf.length, m: Math.max(d.l.m || 0, d.r.m || 0), c: chunks.map((c) => c.hash), n: countLines(buf) };
       continue;
     }
     const byUuid = d.p.toLowerCase().endsWith('.jsonl');
     const buf = aNewer ? unionLines(a, b, { byUuid }) : unionLines(b, a, { byUuid });
     const chunks = await chunksOf(buf);
     for (const c of chunks) extra.set(c.hash, c.data);
-    d.merged = { root: d.root, p: d.p, s: buf.length, m: Math.max(d.l.m || 0, d.r.m || 0), c: chunks.map((c) => c.hash) };
+    d.merged = { root: d.root, p: d.p, s: buf.length, m: Math.max(d.l.m || 0, d.r.m || 0), c: chunks.map((c) => c.hash), n: countLines(buf) };
   }
   return extra;
 }
@@ -108,7 +109,7 @@ function buildRoots(M, kinds, links) {
   for (const [root, kind] of Object.entries(kinds)) roots[root] = { kind, files: [], links: links[root] || [] };
   for (const f of M.values()) {
     if (!roots[f.root]) roots[f.root] = { kind: kinds[f.root] || 'dir', files: [], links: links[f.root] || [] };
-    roots[f.root].files.push({ p: f.p, s: f.s, m: f.m, c: f.c });
+    roots[f.root].files.push({ p: f.p, s: f.s, m: f.m, c: f.c, ...(Number.isFinite(f.n) ? { n: f.n } : {}) });
   }
   for (const r of Object.values(roots)) r.files.sort((x, y) => (x.p < y.p ? -1 : x.p > y.p ? 1 : 0));
   return roots;
@@ -225,11 +226,30 @@ export async function syncPush(cfg, opts, log) {
     const grp = reconcileGroups(snap?.appGroups || null, readAppGroups(cfg), loadGroupLinks(cfg));
     const groupsChanged = grp.renamed.length > 0 || grp.added.length > 0;
     const changed = !snap ? L.size > 0 : decisions.some((d) => PUSH_KINDS.includes(d.kind)) || groupsChanged;
+    // Bericht: was dieser PC einbringt (Titel aus der Chatliste dieses PCs)
+    const chatsHere = await localChats(cfg);
+    const { loadLast } = await import('./commands.js');
+    const last = loadLast();
+    const makeReport = () => buildPushReport({
+      cfg, decisions, extra, remote: (d) => remoteContent(client, d.r),
+      titles: new Map(chatsHere.map((c) => [c.id, c.title])),
+      byCli: new Map(chatsHere.filter((c) => c.cliSessionId).map((c) => [c.cliSessionId, c.id])),
+      oldGroups: snap?.appGroups || null, newGroups: grp.appGroups, renamedGroups: grp.renamed,
+      refs: refsRes?.refs || null, lastPushAt: last?.direction === 'push' ? last.createdAt : null,
+    });
+    const printReport = (rep) => {
+      if (reportEmpty(rep)) return;
+      log.info('Bericht:');
+      for (const l of formatReport(rep)) log.info(`  ${l}`);
+    };
     if (snap && !changed) {
       saveBase(cfg, L, snap.id);
       saveGroupLinks(cfg, grp.links);
+      const rep = await makeReport();
+      printReport(rep);
+      saveReportTime(new Date().toISOString());
       log.info(`Nichts Neues hochzuladen, der gemeinsame Stand ${snap.id} enthaelt alles von diesem PC.${info.pull || info.pullDelete ? ` Auf dem Server gibt es ${info.pull + info.pullDelete} Aenderungen anderer PCs: "clyde pull" holt sie.` : ''}`);
-      return { id: snap.id, uploadedChunks: 0, uploadedBytes: 0, unchanged: true, stats: snap.stats, excluded: local.stats.excluded };
+      return { id: snap.id, uploadedChunks: 0, uploadedBytes: 0, unchanged: true, stats: snap.stats, excluded: local.stats.excluded, report: rep };
     }
     const M = new Map();
     for (const d of decisions) if (d.merged) M.set(d.key, { ...d.merged, root: d.root, p: d.p });
@@ -269,9 +289,11 @@ export async function syncPush(cfg, opts, log) {
     }
     saveBase(cfg, L, manifest.id);
     saveGroupLinks(cfg, grp.links);
-    for (const r of grp.renamed) log.info(`Gruppe umbenannt: "${r.from}" -> "${r.to}" (die anderen PCs uebernehmen das mit /clyde:pull)`);
+    const rep = await makeReport();
     log.info(`Gemeinsamer Stand ${manifest.id} gespeichert: ${manifest.stats.files} Dateien. Von diesem PC: ${info.push} neu/geaendert, ${info.pushDelete} geloescht${info.union ? `, ${info.union} zusammengefuehrt` : ''}${refsRes?.facts?.repos.size ? `, Verweise auf ${refsRes.facts.repos.size} Git-Repo(s) aktuell` : ''}; ${up.chunks} Chunks / ${fmtBytes(up.bytes)} uebertragen.`);
-    return { id: manifest.id, uploadedChunks: up.chunks, uploadedBytes: up.bytes, stats: manifest.stats, projects: manifest.projects, excluded: local.stats.excluded, info };
+    printReport(rep);
+    saveReportTime(new Date().toISOString());
+    return { id: manifest.id, uploadedChunks: up.chunks, uploadedBytes: up.bytes, stats: manifest.stats, projects: manifest.projects, excluded: local.stats.excluded, info, report: rep };
   }
 }
 

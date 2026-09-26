@@ -112,7 +112,8 @@ test('Gruppe umbenannt: Push bringt es ein, der andere PC benennt seine Gruppe u
   const p = collect();
   const res = await push(A.cfg(), {}, p.log);
   assert.ok(!res.unchanged, 'Umbenennen allein ist eine Aenderung');
-  assert.ok(p.out.some((l) => l.includes('Gruppe umbenannt') && l.includes('Archiv alt')), p.out.join('\n'));
+  assert.ok(p.out.some((l) => l.includes('* Gruppe Archiv -> Archiv alt')), p.out.join('\n'));
+  assert.deepEqual(res.report.renamed, [{ kind: 'group', from: 'Archiv', to: 'Archiv alt' }], 'im Bericht');
   assert.deepEqual((await latest()).appGroups.scopes['org/acct'].groups.map((g) => g.name), ['Archiv alt']);
 
   await pull(B.cfg(), { noAsk: true }, quiet);

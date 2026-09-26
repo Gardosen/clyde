@@ -111,22 +111,26 @@ export async function buildLocalManifest(cfg, log, { rehash = false, forget = nu
       let chunks;
       let csize;
       let stale;
+      let n; // Zeilen (nur Textdateien; fehlt bei Cache-Eintraegen aelterer Versionen)
       const fresh = rehash || (forget && forget.has(f.abs));
       if (!fresh && c && c.s === f.s && c.m === f.m && c.ct === f.ct && c.fk === fk && typeof c.cs === 'number') {
         chunks = c.c;
         csize = c.cs;
         stale = !!c.st;
+        n = c.n;
       } else {
-        ({ chunks, size: csize, stale } = await hashFile(f.abs, forms, textMode(f.p)));
+        let lines;
+        ({ chunks, size: csize, stale, lines } = await hashFile(f.abs, forms, textMode(f.p)));
+        if (isTextFile(f.p)) n = lines;
         stats.hashedFiles++;
         stats.hashedBytes += f.s;
       }
-      cache[key] = { s: f.s, m: f.m, ct: f.ct, c: chunks, cs: csize, fk, st: stale };
+      cache[key] = { s: f.s, m: f.m, ct: f.ct, c: chunks, cs: csize, fk, st: stale, n };
       if (stale) stats.stale++;
       chunks.forEach((h, i) => {
         if (!chunkIndex.has(h)) chunkIndex.set(h, { abs: f.abs, index: i, forms, size: chunkSizeAt(csize, i) });
       });
-      files.push({ p: canonicalize(f.p, cfg.forms), lp: f.p, s: csize, m: f.m, ct: f.ct, c: chunks, stale });
+      files.push({ p: canonicalize(f.p, cfg.forms), lp: f.p, s: csize, m: f.m, ct: f.ct, c: chunks, stale, n });
       stats.files++;
       stats.bytes += f.s;
     }
@@ -145,7 +149,7 @@ export async function buildLocalManifest(cfg, log, { rehash = false, forget = nu
 export function manifestRoots(localRoots) {
   const out = {};
   for (const [name, r] of Object.entries(localRoots)) {
-    out[name] = { kind: r.kind, missing: r.missing || undefined, files: r.files.map(({ p, s, m, c }) => ({ p, s, m, c })), links: r.links };
+    out[name] = { kind: r.kind, missing: r.missing || undefined, files: r.files.map(({ p, s, m, c, n }) => ({ p, s, m, c, ...(Number.isFinite(n) ? { n } : {}) })), links: r.links };
   }
   return out;
 }

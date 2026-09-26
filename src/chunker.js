@@ -68,20 +68,28 @@ export async function* chunkStream(source) {
 // und ob die Datei "veraltet lokalisiert" ist: neutral und zurueck ergibt nicht
 // mehr die Originalbytes (z. B. nach einer neuen Projekt-Zuordnung). Solche Dateien
 // muss ein Pull neu schreiben, obwohl ihre neutrale Form unveraendert ist.
+// Zeilen zaehlen (Zeilenumbrueche), fuer den Bericht beim Push
+export function countLines(buf) {
+  let n = 0;
+  for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) n++;
+  return n;
+}
+
 export async function hashFile(absPath, forms, mode = 'text') {
   const chunks = [];
   let size = 0;
+  let lines = 0;
   if (!forms.length) {
-    for await (const c of chunkStream(rawSource(absPath))) { chunks.push(c.hash); size += c.data.length; }
-    return { chunks, size, stale: false };
+    for await (const c of chunkStream(rawSource(absPath))) { chunks.push(c.hash); size += c.data.length; lines += countLines(c.data); }
+    return { chunks, size, stale: false, lines };
   }
   const rawHash = createHash('sha256');
   const backHash = createHash('sha256');
-  const tapped = (async function* () { for await (const p of rawSource(absPath)) { rawHash.update(p); yield p; } })();
+  const tapped = (async function* () { for await (const p of rawSource(absPath)) { rawHash.update(p); lines += countLines(p); yield p; } })();
   const canonical = transformStream(tapped, (b) => canonicalizeBuf(b, forms));
   const chunkData = (async function* () { for await (const c of chunkStream(canonical)) { chunks.push(c.hash); size += c.data.length; yield c.data; } })();
   for await (const b of localizeStream(chunkData, forms, mode)) backHash.update(b);
-  return { chunks, size, stale: rawHash.digest('hex') !== backHash.digest('hex') };
+  return { chunks, size, stale: rawHash.digest('hex') !== backHash.digest('hex'), lines };
 }
 
 // Groesse von Chunk Nr. i bei bekannter Gesamtgroesse

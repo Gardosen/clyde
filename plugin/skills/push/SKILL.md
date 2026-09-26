@@ -80,6 +80,12 @@ Projekt: https://github.com/Gardosen/clyde
    - Warnungen zur Version (veraltetes Clyde oder aelterer Server) im Bericht nennen.
 
 5. **Ergebnis melden:** kurz
+   - den **Bericht** von Clyde (Block ab der Zeile `Bericht:`) als Liste
+     wiedergeben, mit denselben Ueberschriften: Neuer Content (Chat -> +N Zeilen),
+     Neuer Chat, Neues Repo registriert, Umbenannt, In Gruppe verschoben,
+     Angeheftet, Geloest, Archiviert, Aus dem Archiv geholt, Geloescht.
+     Nichts weglassen, nichts hinzudichten; fehlt der Block, gab es nichts zu
+     berichten.
    - was nachgereicht wurde (committet, gepusht, Verweise gesetzt, geklont,
      uebersprungen)
    - ob ein neuer gemeinsamer Stand entstanden ist oder nichts Neues da war

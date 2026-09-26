@@ -421,6 +421,11 @@ output names the backup folder.
   the base, so a rename on one computer and simply opening the chat on another
   both survive. Otherwise the newer version wins. Without a base (first sync)
   the states are combined.
+- **Push report:** after every push Clyde lists what this computer brought in:
+  new content (chat -> +N lines, counted while hashing), new chats, repositories
+  linked since the last push, renamed chats and groups, chats moved between
+  groups, pinned or unpinned, archived or restored, and deleted chats. If the
+  older snapshot has no line counts yet, the report shows the size instead.
 - **Push:** the server lists the chunks it is missing; only those are uploaded,
   compressed. A 100 MB chat that was only appended to since the last push costs a
   single chunk. The merged state is then stored as a new snapshot. If another
