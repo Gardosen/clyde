@@ -415,3 +415,20 @@ export async function groups(cfg, opts, log) {
   log.info('In die App uebernehmen: /clyde:groups im Clyde-Chat (Clyde schreibt die Einstellungen der App nicht selbst).');
   return result;
 }
+
+// clyde link [PFAD|REPO] [--unlink] [--json]: den Chat, aus dem heraus Clyde
+// aufgerufen wird (/clyde:link), einem Repo zuordnen. Aendert nur die Verweise
+// auf dem Server; keine Sperre, kein Clyde-Chat-Modus, keine Chat-Dateien.
+export async function link(cfg, opts, log) {
+  const { linkOwnChat } = await import('./refs.js');
+  const own = ownSession();
+  const repoRef = (opts.args || [])[0];
+  const r = await linkOwnChat(cfg, new Client(cfg.server, cfg.token), repoRef, { unlink: !!opts.unlink, ownId: own?.hostSessionId || null }, log);
+  if (opts.json) { process.stdout.write(JSON.stringify(r, null, 1) + String.fromCharCode(10)); return r; }
+  if (!repoRef && !opts.unlink) {
+    log.info(r.linked ? `"${r.chat.title}" gehoert zu ${r.linked.name} (${r.linked.remote}); hier: ${r.linked.path || '-'} [${r.linked.status}]` : `"${r.chat.title}" ist keinem Repo zugeordnet.`);
+    if (r.known.length) log.info(`Bekannte Repos: ${r.known.map((k) => `${k.name}${k.path ? ` (${k.path})` : ''}`).join(' | ')}`);
+    log.info('Zuordnen: clyde link PFAD-ZUM-REPO   loesen: clyde link --unlink');
+  }
+  return r;
+}

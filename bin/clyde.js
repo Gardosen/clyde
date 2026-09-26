@@ -6,7 +6,7 @@ import { log } from '../src/log.js';
 import { push, pull } from '../src/commands.js';
 import { mergeSnapshots } from '../src/sync.js';
 import { update } from '../src/update.js';
-import { init, map, list, status, doctor, gc, del, relocate, repos, groups, refs } from '../src/commands-misc.js';
+import { init, map, list, status, doctor, gc, del, relocate, repos, groups, refs, link } from '../src/commands-misc.js';
 
 const HELP = `clyde - synchronisiert den Zustand der Claude-Desktop-App-Chats zwischen PCs
 
@@ -41,7 +41,10 @@ Befehle
   refs --set REPO PFAD              Repo liegt hier unter PFAD (geprueft, sofort hochgeladen)
   refs --clone REPO [--to PFAD]     Repo hierher klonen und eintragen
   refs --skip REPO                  Repo auf diesem Geraet nicht mehr anbieten
-  refs --link CHAT REPO             Chat von Hand einem Repo zuordnen (--unlink CHAT loest es)
+  refs --link CHAT REPO|PFAD        Chat von Hand einem Repo zuordnen; ein Pfad nimmt das Repo
+                                    neu auf (--unlink CHAT loest es)
+  link [PFAD|REPO] [--unlink]       den aufrufenden Chat der App einem Repo zuordnen (/clyde:link);
+                                    ohne Angabe: zeigen, womit er verknuepft ist
   repos --commit PFAD [-m TEXT]     alles committen und auf den Remote pushen
   repos --push PFAD                 Commits auf den Remote pushen (ohne Upstream mit -u)
   list                              Staende auf dem Server mit frei werdendem Speicher
@@ -145,7 +148,7 @@ const opts = {
   set: values.set, clone: values.clone, skip: values.skip, link: values.link, unlink: values.unlink, pending: values.pending, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
-const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups, update, refs };
+const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups, update, refs, link };
 
 try {
   const fn = commands[cmd];

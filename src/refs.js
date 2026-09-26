@@ -282,7 +282,45 @@ export async function skipRepo(cfg, client, ref, log) {
   log.info(`${repo.name} wird auf ${me.name} uebersprungen (wieder aufnehmen: clyde refs --set oder --clone).`);
 }
 
-// clyde refs --link CHAT REPO / --unlink CHAT: Chat von Hand einem Repo zuordnen
+// Repo ueber einen Pfad auf diesem Geraet in die Verweise aufnehmen (auch wenn es
+// dort noch nicht steht): Pfad pruefen, Remote/Branch/Ort eintragen, hochladen.
+// Liefert [key, repo].
+export async function registerRepoPath(cfg, client, p) {
+  const me = device(cfg);
+  const abs = normalizeHome(path.resolve(String(p).replace(/^["']|["']$/g, '')));
+  if (!fs.existsSync(abs)) throw new Error(`${abs} gibt es nicht.`);
+  const info = await inspectRepo(abs);
+  if (!info) throw new Error(`${abs} ist kein Git-Repo.`);
+  if (!info.remote) throw new Error(`${info.root} hat keinen Remote; ohne Remote laesst es sich auf anderen Geraeten nicht holen.`);
+  if (tooBroad(info.rootAbs, cfg.home)) throw new Error(`${info.root} ist als Repo zu weit gefasst (Home oder Laufwerk).`);
+  const key = remoteKey(info.remote);
+  const at = now();
+  const res = await updateRefs(client, (r) => {
+    const e = r.repos[key] || (r.repos[key] = { remote: sanitizeRemote(info.remote), name: path.basename(info.rootAbs), root: canonicalize(info.root, cfg.forms), locations: {} });
+    Object.assign(e, { remote: sanitizeRemote(info.remote), branch: info.branch, head: info.head });
+    e.locations = e.locations || {};
+    e.locations[me.id] = { device: me.name, path: info.root, status: 'ok', by: 'device', at };
+  });
+  if (!res) throw new Error('Der Server kennt noch keine Verweise; Server auf 0.6.0 aktualisieren.');
+  return [key, res.refs.repos[key]];
+}
+
+const looksLikePath = (s) => /[\\/]/.test(String(s)) || /^[A-Za-z]:/.test(String(s)) || String(s).startsWith('~') || String(s) === '.';
+
+// Chat einem Repo zuordnen: REPO ist Name/Remote/Schluessel eines bekannten Repos
+// oder ein Pfad (dann wird das Repo bei Bedarf neu aufgenommen)
+async function linkTo(cfg, client, chatId, title, repoRef, log) {
+  const refs = await client.getRefs();
+  if (!refs) throw new Error('Der Server kennt noch keine Verweise; Server auf 0.6.0 aktualisieren.');
+  let key, repo;
+  if (looksLikePath(repoRef) || fs.existsSync(String(repoRef))) [key, repo] = await registerRepoPath(cfg, client, repoRef);
+  else [key, repo] = resolveRepo(refs, repoRef);
+  await updateRefs(client, (r) => { r.chats[chatId] = { repo: key, sub: '', by: 'device', at: now() }; });
+  log.info(`"${title}" gehoert jetzt zu ${repo.name} (${repo.remote}); hochgeladen.`);
+  return { key, repo };
+}
+
+// clyde refs --link CHAT REPO|PFAD / --unlink CHAT: Chat von Hand zuordnen
 export async function linkChat(cfg, client, chatRef, repoRef, log) {
   const chats = await localChats(cfg);
   const s = String(chatRef || '').trim().toLowerCase();
@@ -290,14 +328,62 @@ export async function linkChat(cfg, client, chatRef, repoRef, log) {
   if (!s || !hits.length) throw new Error(`Chat "${chatRef}" nicht gefunden.`);
   if (hits.length > 1) throw new Error(`"${chatRef}" passt auf mehrere Chats: ${hits.map((c) => c.title).join(' | ')}`);
   const chat = hits[0];
+  if (repoRef === null) {
+    const res = await updateRefs(client, (r) => { delete r.chats[chat.id]; });
+    if (!res) throw new Error('Der Server kennt noch keine Verweise; Server auf 0.6.0 aktualisieren.');
+    log.info(`"${chat.title}" ist keinem Repo mehr zugeordnet.`);
+    return null;
+  }
+  return linkTo(cfg, client, chat.id, chat.title, repoRef, log);
+}
+
+// Eintrag eines Chats in der Chatliste, auch wenn er ausgenommen ist (der aufrufende Chat)
+function chatEntry(cfg, id) {
+  const root = cfg.roots['desktop-sessions'];
+  if (!root) return null;
+  const stack = [root.path];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (e.isDirectory()) { stack.push(path.join(dir, e.name)); continue; }
+      if (e.name === `${id}.json`) { try { return JSON.parse(fs.readFileSync(path.join(dir, e.name), 'utf8')); } catch { return null; } }
+    }
+  }
+  return null;
+}
+
+// clyde link [PFAD|REPO] [--unlink]: den Chat zuordnen, aus dem heraus Clyde
+// aufgerufen wird. Aendert nur die Verweise auf dem Server, nie Chat-Dateien;
+// registriert den Chat nicht als Clyde-Chat.
+export async function linkOwnChat(cfg, client, repoRef, { unlink = false, ownId } = {}, log) {
+  const id = ownId;
+  if (!id) throw new Error('clyde link geht nur aus einem Chat der Claude-App heraus (dort /clyde:link). Im Terminal: clyde refs --link CHAT REPO|PFAD');
+  const title = chatEntry(cfg, id)?.title || id;
+  if (unlink) {
+    const res = await updateRefs(client, (r) => { delete r.chats[id]; });
+    if (!res) throw new Error('Der Server kennt noch keine Verweise; Server auf 0.6.0 aktualisieren.');
+    log.info(`"${title}" ist keinem Repo mehr zugeordnet.`);
+    return { chat: { id, title }, linked: null };
+  }
+  if (repoRef) {
+    const { key } = await linkTo(cfg, client, id, title, repoRef, log);
+    return { chat: { id, title }, ...(await linkState(cfg, client, id, key)) };
+  }
+  return { chat: { id, title }, ...(await linkState(cfg, client, id)) };
+}
+
+// Womit ist der Chat verknuepft, welche Repos kennt das Konto (fuer die Auswahl)?
+async function linkState(cfg, client, id) {
+  const me = device(cfg);
   const refs = await client.getRefs();
   if (!refs) throw new Error('Der Server kennt noch keine Verweise; Server auf 0.6.0 aktualisieren.');
-  if (repoRef === null) {
-    await updateRefs(client, (r) => { delete r.chats[chat.id]; });
-    log.info(`"${chat.title}" ist keinem Repo mehr zugeordnet.`);
-    return;
-  }
-  const [key, repo] = resolveRepo(refs, repoRef);
-  await updateRefs(client, (r) => { r.chats[chat.id] = { repo: key, sub: '', by: 'device', at: now() }; });
-  log.info(`"${chat.title}" gehoert jetzt zu ${repo.name}.`);
+  const here = (e) => e.locations?.[me.id] || null;
+  const link = refs.chats?.[id];
+  const e = link ? refs.repos?.[link.repo] : null;
+  return {
+    linked: e ? { key: link.repo, name: e.name, remote: e.remote, path: here(e)?.path || null, status: here(e)?.status || 'nicht eingetragen', by: link.by } : null,
+    known: Object.entries(refs.repos || {}).map(([key, r]) => ({ key, name: r.name, remote: r.remote, path: here(r)?.status === 'ok' ? here(r).path : null })),
+  };
 }

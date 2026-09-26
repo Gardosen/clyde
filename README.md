@@ -71,6 +71,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | `/clyde:status` | Latest snapshot, what is waiting to be pushed or pulled, busy chats |
 | `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
 | `/clyde:refs` | Show and correct which repository belongs to which chat and where it lives on each device |
+| `/clyde:link [path \| --remove]` | Typed in any chat (not the Clyde chat): links that chat to a Git repository, also one that is not in the references yet |
 | `/clyde:update` | Updates the Clyde plugin in the app and the Clyde CLI to the latest release, after asking |
 | `/clyde:groups` | Apply the chat list groups (including renamed ones), pinned chats and chat titles of the other computers in the app, without a restart (also done at the end of `/clyde:pull`) |
 
@@ -334,6 +335,13 @@ drive, mappings and memory links. Each device gets a fixed ID in
   folder is not a repository. A path you change there counts as *unverified*
   until the device confirms or rejects it on its next push. Concurrent changes
   are refused with a conflict instead of being overwritten.
+- **Linking a chat by hand:** type `/clyde:link <path to the repo>` in the chat
+  itself. Clyde recognises the chat, checks the path (a Git repository with a
+  remote), adds the repository to the references if it is new and uploads the
+  link at once. It only changes the references, never chat files, so it works
+  while other chats are busy, and it does not turn that chat into a Clyde chat.
+  Without a path it shows the current link and offers the repositories the
+  account already knows; `--remove` removes the link.
 - **Where does a chat keep its knowledge?** In the dashboard (click a chat,
   *Auf den Geräten*) and in `clyde status -v`: per device the project folder, the
   repository with path and status, and the memory folder with its link target.
@@ -345,7 +353,8 @@ clyde refs --pending                 # also the chats of the shared state (befor
 clyde refs --clone proj [--to PATH]  # clone here and record the path
 clyde refs --set proj "D:\Code\proj" # it is already here (checked: same remote)
 clyde refs --skip proj               # do not offer it on this device
-clyde refs --link "My notes" proj    # chat whose folder is not a repository
+clyde refs --link "My notes" proj    # chat whose folder is not a repository (a path also works)
+clyde link "C:\Code\proj"            # from inside a chat of the app: link that chat (/clyde:link)
 ```
 
 **Before every push, `/clyde:push` also checks for forgotten work** in the

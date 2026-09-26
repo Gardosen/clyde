@@ -39,7 +39,9 @@ Projekt: https://github.com/Gardosen/clyde
 4. **Weitere Wuensche des Nutzers** umsetzen, wenn er sie nennt:
    - Repo liegt hier woanders: `clyde refs --set NAME "PFAD"`
    - Chat, dessen Arbeitsordner kein Git-Repo ist, einem Repo zuordnen:
-     `clyde refs --link "CHAT-TITEL" NAME`; Zuordnung loesen: `clyde refs --unlink "CHAT-TITEL"`
+     `clyde refs --link "CHAT-TITEL" NAME` oder mit einem Pfad statt NAME (nimmt ein
+     neues Repo auf); Zuordnung loesen: `clyde refs --unlink "CHAT-TITEL"`.
+     Einfacher: im betreffenden Chat selbst `/clyde:link PFAD` eintippen.
    Clyde prueft jeden Pfad (vorhanden, Git-Repo, gleicher Remote) und lehnt
    sonst ab; die Meldung dann weitergeben und nachfragen. Nie selbst klonen oder
    Pfade setzen, die der Nutzer nicht bestaetigt hat.

@@ -216,3 +216,59 @@ test('Dashboard: je Chat und Geraet Projektordner, Repo und Stand des Verweises'
   const pd = byDev[devOf(pc('D'))];
   assert.equal(pd.repo.status, 'skipped');
 });
+
+test('clyde link aus einem Arbeits-Chat: neues Repo per Pfad, sofort hochgeladen, ohne Clyde-Chat zu werden', async () => {
+  const { link } = await import('../src/commands-misc.js');
+  const NEU = path.join(tmp, 'neu.git');
+  g(tmp, 'init', '--bare', NEU);
+  const PN = path.join(A.home, 'neu');
+  g(tmp, 'clone', NEU, PN);
+  const entry = path.join(A.base, 'sessions', 'local_x.json');
+  write(entry, JSON.stringify({ sessionId: 'local_x', cwd: A.home, title: 'Arbeitschat' }));
+  const before = fs.readFileSync(entry, 'utf8');
+  const cfgBefore = JSON.stringify(A.cfg().raw.excludeSessions || []);
+
+  await assert.rejects(link(A.cfg(), { args: [PN] }, quiet), /nur aus einem Chat der Claude-App/, 'ausserhalb der App');
+  process.env.CLAUDE_CODE_SESSION_ID = 'cli-x';
+  process.env.CLAUDE_CODE_HOST_SESSION_ID = 'local_x';
+  try {
+    const r = await link(A.cfg(), { args: [path.join(PN)] }, quiet);
+    const key = remoteKey(NEU);
+    assert.equal(r.linked.key, key);
+    const refsNow = await refsOf();
+    assert.equal(refsNow.chats.local_x.repo, key, 'Chat zugeordnet');
+    assert.equal(refsNow.repos[key].locations[devOf(A)].path, PN, 'Repo neu aufgenommen, mit Ort auf diesem Geraet');
+    assert.equal(refsNow.repos[key].name, 'neu');
+    assert.equal(fs.readFileSync(entry, 'utf8'), before, 'Chat-Datei unberuehrt');
+    assert.equal(JSON.stringify(A.cfg().raw.excludeSessions || []), cfgBefore, 'nicht als Clyde-Chat registriert');
+
+    const shown = await link(A.cfg(), {}, quiet);
+    assert.equal(shown.chat.title, 'Arbeitschat');
+    assert.equal(shown.linked.name, 'neu');
+    assert.ok(shown.known.some((k) => k.name === 'proj' && k.path === PA), 'bekannte Repos mit Pfad hier zur Auswahl');
+
+    const plain = path.join(tmp, 'ohne-git');
+    fs.mkdirSync(plain, { recursive: true });
+    await assert.rejects(link(A.cfg(), { args: [plain] }, quiet), /kein Git-Repo/);
+    const noRemote = path.join(tmp, 'ohne-remote');
+    g(tmp, 'init', noRemote);
+    await assert.rejects(link(A.cfg(), { args: [noRemote] }, quiet), /keinen Remote/);
+
+    await link(A.cfg(), { unlink: true }, quiet);
+    assert.equal((await refsOf()).chats.local_x, undefined, 'geloest');
+  } finally {
+    delete process.env.CLAUDE_CODE_SESSION_ID;
+    delete process.env.CLAUDE_CODE_HOST_SESSION_ID;
+  }
+});
+
+test('refs --link nimmt auch einen Pfad (neues Repo) an', async () => {
+  const OTHER = path.join(tmp, 'other.git');
+  g(tmp, 'init', '--bare', OTHER);
+  const PO = path.join(A.home, 'other');
+  g(tmp, 'clone', OTHER, PO);
+  await refs(A.cfg(), { link: true, args: ['Notizen', PO] }, quiet);
+  const r = await refsOf();
+  assert.equal(r.chats.local_n.repo, remoteKey(OTHER));
+  assert.equal(r.repos[remoteKey(OTHER)].locations[devOf(A)].status, 'ok');
+});
