@@ -5,7 +5,7 @@ import { loadConfig } from '../src/config.js';
 import { log } from '../src/log.js';
 import { push, pull } from '../src/commands.js';
 import { mergeSnapshots } from '../src/sync.js';
-import { init, map, list, status, doctor, gc, del, relocate } from '../src/commands-misc.js';
+import { init, map, list, status, doctor, gc, del, relocate, repos } from '../src/commands-misc.js';
 
 const HELP = `clyde - synchronisiert den Zustand der Claude-Desktop-App-Chats zwischen PCs
 
@@ -27,6 +27,10 @@ Befehle
                                     im Terminal bestaetigen oder --yes anhaengen
   map --remove N [--dry-run|--yes]  Projekt-Zuordnung entfernen, Chats zurueckstellen
   status [-v]                       Unterschiede zum letzten Snapshot, laufende Chats
+  repos                             Git-Repos im gemeinsamen Stand und eigene Auswahl
+  repos --scan                      Git-Repos in und unter den Projektordnern der Chats finden
+  repos --add PFAD [PFAD ...]       Repo mitnehmen (wirkt mit dem naechsten Push)
+  repos --remove PFAD               Repo abwaehlen (naechster Push nimmt es aus dem Stand)
   list                              Staende auf dem Server mit frei werdendem Speicher
   doctor                            Pfade, Platzhalter, Prozesse und Server pruefen
   delete ID [ID ...]                Staende auf dem Server loeschen und aufraeumen; neuester
@@ -43,6 +47,8 @@ Optionen
   --dry-run      bei pull und map nur anzeigen, was passieren wuerde
   --yes          bei map und delete ohne Rueckfrage ausfuehren (fuer Plugin und Skripte)
   --rehash       bei push, pull und status den Hash-Cache ignorieren und alles neu hashen
+  --no-repos     bei push und pull Git-Repos der Projektordner nicht erfassen, klonen
+                 oder vorspulen (dauerhaft: "repos": false in ~/.clyde/config.json)
   --no-backup    bei pull kein Backup unter ~/.clyde/backups anlegen
   --no-ask       bei pull fehlende Projektordner nur melden, nicht nachfragen
   -v, --verbose  mehr Details
@@ -83,6 +89,8 @@ try {
       create: { type: 'boolean', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
       rehash: { type: 'boolean', default: false },
+      'no-repos': { type: 'boolean', default: false },
+      scan: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -106,10 +114,10 @@ const opts = {
   remove: values.remove, add: values.add, list: values.list, clydeChat: values['clyde-chat'],
   plan: expandHome(values.plan), chat: values.chat, to: expandHome(values.to), undo: expandHome(values.undo),
   exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
-  force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, verbose: values.verbose,
+  force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, noRepos: values['no-repos'], scan: values.scan, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
-const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots };
+const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos };
 
 try {
   const fn = commands[cmd];

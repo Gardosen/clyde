@@ -9,7 +9,7 @@ import { liveSessions, ownSession, describeSession } from './session.js';
 import readline from 'node:readline/promises';
 import { saveConfig, loadConfig, normalizeServerUrl } from './config.js';
 import { configPath } from './paths.js';
-import { normalizeHome, normalizeDrive, localize } from './rewrite.js';
+import { normalizeHome, normalizeDrive, localize, canonicalize } from './rewrite.js';
 import { loadLast, registerClydeChat } from './commands.js';
 import { planRelocation, applyRelocation, undoRelocation } from './relocate.js';
 import { fetchLatest, prepare, describe } from './sync.js';
@@ -279,4 +279,62 @@ export async function del(cfg, opts, log) {
   log.info(`${chosen.length} ${chosen.length === 1 ? 'Stand' : 'Staende'} geloescht, ${fmtBytes(r.freedBytes)} freigegeben.`
     + (r.recent ? ` ${r.recent} weitere Chunks werden frei, sobald sie aelter als ${r.gcGraceMinutes} Minuten sind (Schutz fuer laufende Pushs); dann "clyde gc".` : ''));
   return { deleted: chosen.length, freedBytes: r.freedBytes, recent: r.recent };
+}
+
+// Git-Repos: anzeigen (gemeinsamer Stand und eigene Auswahl), Kandidaten suchen,
+// auswaehlen oder abwaehlen. Aenderungen wirken mit dem naechsten Push.
+export async function repos(cfg, opts, log) {
+  const { scanRepos, inspectRepo, extraRepos, dropRepos, sanitizeRemote } = await import('./repos.js');
+  const { isUnder } = await import('./remap.js');
+  const same = (a, b) => isUnder(a, b) && isUnder(b, a);
+  const raw = { ...cfg.raw, extraRepos: extraRepos(cfg), dropRepos: dropRepos(cfg) };
+  if (opts.scan) {
+    const found = await scanRepos(cfg);
+    if (!found.length) { log.info('In und direkt unter den Projektordnern deiner Chats liegen keine Git-Repos.'); return { found }; }
+    log.info('Git-Repos in und direkt unter den Projektordnern deiner Chats:');
+    found.forEach((r, i) => {
+      const state = r.viaChat ? 'automatisch (ein Chat arbeitet darin)' : r.selected ? 'ausgewaehlt' : 'nicht ausgewaehlt';
+      const warn = [!r.remote && 'kein Remote', r.ahead && `${r.ahead} Commit(s) nicht gepusht`, r.dirty && `${r.dirty} Datei(en) nicht committet`].filter(Boolean);
+      log.info(`${String(i + 1).padStart(2)}. ${r.root}  ${r.remote ? sanitizeRemote(r.remote) : '-'}  [${!r.head ? 'leer' : r.branch || 'losgeloest'}]  ${fmtBytes(r.sizeBytes)}  ${state}${warn.length ? `  (${warn.join(', ')})` : ''}`);
+    });
+    log.info('Auswaehlen: clyde repos --add PFAD [PFAD ...]   abwaehlen: clyde repos --remove PFAD');
+    return { found };
+  }
+  if (opts.add) {
+    const paths = (opts.args || []).map((p) => normalizeHome(path.resolve(p.replace(/^["']|["']$/g, ''))));
+    if (!paths.length) throw new Error('Aufruf: clyde repos --add PFAD [PFAD ...]   (Kandidaten: clyde repos --scan)');
+    for (const p of paths) {
+      const info = fs.existsSync(p) ? await inspectRepo(p) : null;
+      if (!info) throw new Error(`${p} ist kein Git-Repo.`);
+      if (!info.remote) throw new Error(`${info.root} hat keinen Remote und laesst sich auf anderen PCs nicht klonen.`);
+      if (!raw.extraRepos.some((x) => same(x, info.root))) raw.extraRepos.push(info.root);
+      const canon = canonicalize(info.root, cfg.forms);
+      raw.dropRepos = raw.dropRepos.filter((d) => d !== canon);
+      log.info(`Ausgewaehlt: ${info.root} (${sanitizeRemote(info.remote)})`);
+    }
+    saveConfig(raw);
+    log.info('Wirkt mit dem naechsten Push; die anderen PCs klonen es beim naechsten Pull.');
+    return { selected: raw.extraRepos };
+  }
+  if (opts.remove !== undefined) {
+    const p = normalizeHome(path.resolve(String(opts.remove).replace(/^["']|["']$/g, '')));
+    const hit = raw.extraRepos.find((x) => same(x, p));
+    if (!hit) throw new Error(`${p} ist nicht ausgewaehlt (siehe clyde repos).`);
+    raw.extraRepos = raw.extraRepos.filter((x) => x !== hit);
+    const canon = canonicalize(hit, cfg.forms);
+    if (!raw.dropRepos.includes(canon)) raw.dropRepos.push(canon);
+    saveConfig(raw);
+    const { sidebarCwds } = await import('./repos.js');
+    if ((await sidebarCwds(cfg)).some((c) => isUnder(c, hit))) log.warn(`In ${hit} arbeiten Chats; es bleibt deshalb automatisch dabei.`);
+    log.info(`Abgewaehlt: ${hit}. Der naechste Push nimmt es aus dem gemeinsamen Stand; vorhandene Klone auf anderen PCs bleiben, werden aber nicht mehr aktualisiert.`);
+    return { selected: raw.extraRepos };
+  }
+  const snap = await fetchLatest(new Client(cfg.server, cfg.token));
+  const shared = snap?.repos || [];
+  log.info(shared.length ? `Im gemeinsamen Stand (${shared.length}):` : 'Im gemeinsamen Stand sind keine Git-Repos vermerkt.');
+  for (const r of shared) log.info(`  ${localize(r.root, cfg.forms)}  ${r.remote}  [${r.branch || 'losgeloest'}]  von ${r.host}`);
+  const sel = raw.extraRepos;
+  log.info(sel.length ? `Auf diesem PC ausgewaehlt (${sel.length}): ${sel.join(' | ')}` : 'Auf diesem PC ist nichts eigens ausgewaehlt (Kandidaten: clyde repos --scan).');
+  if (raw.dropRepos.length) log.info(`Beim naechsten Push abgewaehlt: ${raw.dropRepos.map((d) => localize(d, cfg.forms)).join(' | ')}`);
+  return { shared, selected: sel };
 }

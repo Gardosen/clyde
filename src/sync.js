@@ -10,6 +10,8 @@ import { pathBelongsTo } from './session.js';
 import { readAppGroups } from './appgroups.js';
 import { loadBase, saveBase, flatten, decide, unionLines, chunksOf, sigOf } from './merge.js';
 import { fmtBytes } from './log.js';
+import { collectRepos, mergeRepos, reposSignature } from './repos.js';
+import { saveConfig } from './config.js';
 
 // v3 (0.4.2): woertliche Platzhalter im Inhalt sind maskiert (@@CLYDE_ESC_).
 // Staende v2 lassen sich weiter lesen; Clyde < 0.4.2 lehnt v3 ab und kann so
@@ -168,6 +170,9 @@ export async function prepare(cfg, client, snap, log, scanOpts = {}) {
 export async function syncPush(cfg, opts, log) {
   const client = new Client(cfg.server, cfg.token);
   await client.health();
+  // Git-Repos der Projektordner (Remote, Branch, Commit); Warnungen einmal zeigen
+  const mine = opts.noRepos ? null : await collectRepos(cfg, log);
+  for (const w of mine?.warnings || []) log.warn(w);
   const forget = new Set(); // Dateien, deren gecachter Hash nicht mehr stimmt
   for (let attempt = 1; ; attempt++) {
     const snap = await fetchLatest(client);
@@ -178,7 +183,9 @@ export async function syncPush(cfg, opts, log) {
     const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r));
     const info = describe(decisions);
     const PUSH_KINDS = ['local', 'local-delete', 'union', 'conflict-local', 'conflict-keep-local'];
-    const changed = !snap ? L.size > 0 : decisions.some((d) => PUSH_KINDS.includes(d.kind));
+    const repos = mine ? mergeRepos(snap?.repos, mine.repos, mine.drop) : (snap?.repos || []);
+    const reposChanged = reposSignature(repos) !== reposSignature(snap?.repos);
+    const changed = !snap ? L.size > 0 || repos.length > 0 : decisions.some((d) => PUSH_KINDS.includes(d.kind)) || reposChanged;
     if (snap && !changed) {
       saveBase(cfg, L, snap.id);
       log.info(`Nichts Neues hochzuladen, der gemeinsame Stand ${snap.id} enthaelt alles von diesem PC.${info.pull || info.pullDelete ? ` Auf dem Server gibt es ${info.pull + info.pullDelete} Aenderungen anderer PCs: "clyde pull" holt sie.` : ''}`);
@@ -208,6 +215,7 @@ export async function syncPush(cfg, opts, log) {
       rootPaths: Object.fromEntries(Object.entries(cfg.roots).map(([n, r]) => [n, r.path])),
       projects: [...new Set([...(snap?.projects || []), ...(await collectProjects(cfg))])].sort(),
       appGroups: mergeAppGroups(snap?.appGroups, readAppGroups(cfg)),
+      repos,
       roots,
       stats: statsOf(roots),
     };
@@ -220,7 +228,8 @@ export async function syncPush(cfg, opts, log) {
       throw e;
     }
     saveBase(cfg, L, manifest.id);
-    log.info(`Gemeinsamer Stand ${manifest.id} gespeichert: ${manifest.stats.files} Dateien. Von diesem PC: ${info.push} neu/geaendert, ${info.pushDelete} geloescht${info.union ? `, ${info.union} zusammengefuehrt` : ''}; ${up.chunks} Chunks / ${fmtBytes(up.bytes)} uebertragen.`);
+    if (mine?.drop.length) { const raw = { ...cfg.raw }; delete raw.dropRepos; saveConfig(raw); } // abgewaehlte Repos sind raus
+    log.info(`Gemeinsamer Stand ${manifest.id} gespeichert: ${manifest.stats.files} Dateien. Von diesem PC: ${info.push} neu/geaendert, ${info.pushDelete} geloescht${info.union ? `, ${info.union} zusammengefuehrt` : ''}${repos.length ? `, ${repos.length} Git-Repo(s) vermerkt` : ''}; ${up.chunks} Chunks / ${fmtBytes(up.bytes)} uebertragen.`);
     return { id: manifest.id, uploadedChunks: up.chunks, uploadedBytes: up.bytes, stats: manifest.stats, projects: manifest.projects, excluded: local.stats.excluded, info };
   }
 }
@@ -292,7 +301,7 @@ export async function mergeSnapshots(cfg, opts, log) {
     version: MANIFEST_VERSION, id: makeId(), createdAt: new Date().toISOString(), parent: latest?.id || null,
     host: [...new Set(snaps.map((s) => s.host))].join('+'), user: snaps[0].user, home: snaps[0].home, projectDrive: snaps[0].projectDrive || null,
     platform: snaps[0].platform, rootPaths: snaps[0].rootPaths, mergedFrom: ids,
-    projects: projects.sort(), appGroups, roots, stats: statsOf(roots),
+    projects: projects.sort(), appGroups, repos: snaps.reduce((acc, s) => mergeRepos(acc, s.repos), []), roots, stats: statsOf(roots),
   };
   if (opts.dryRun) { log.info(`Trockenlauf: fusionierter Stand haette ${manifest.stats.files} Dateien (${unions} zusammengefuehrt, ${conflicts} Konflikte nach Datum entschieden).`); return { manifest }; }
   await client.putSnapshot(manifest);

@@ -28,4 +28,8 @@ Projekt: https://github.com/Gardosen/clyde
    - ob ein neuer gemeinsamer Stand entstanden ist oder nichts Neues da war
    - wie viele Dateien dieser PC beigetragen hat und wie viel uebertragen wurde
    - meldet Clyde Aenderungen anderer PCs, `/clyde:pull` empfehlen
+   - jede Warnung zu Git-Repos weitergeben (nicht gepushte Commits, nicht
+     committete Dateien, fehlender Remote oder Upstream): Das kommt auf den
+     anderen PCs erst an, wenn es auf dem Remote liegt. Nicht selbst committen
+     oder pushen, nur darauf hinweisen.
    Keine Einzeldateien auflisten.

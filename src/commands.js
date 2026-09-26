@@ -16,6 +16,8 @@ import { fmtBytes } from './log.js';
 import { syncPush, prepare, localPlan, fetchLatest, resolveUnions, describe, remoteContent, localCanonical, projectChats } from './sync.js';
 import { flatten, saveBase, loadBase, keyOf } from './merge.js';
 import { changeMapping } from './remap.js';
+import { sidebarCwds, gitAvailable, clonableRoots, planRepos, describeRepoPlan, applyRepos } from './repos.js';
+import { isUnder } from './remap.js';
 
 export { MANIFEST_VERSION } from './sync.js';
 
@@ -50,27 +52,7 @@ export function registerClydeChat(cfg, log) {
 // Projektordner, auf die die Chats zeigen (aus dem Sidebar-Index der Desktop-App),
 // in neutraler Form fuer das Manifest. Clyde-Chats zaehlen nicht mit.
 export async function collectProjects(cfg) {
-  const root = cfg.roots['desktop-sessions'];
-  const out = new Set();
-  if (!root) return [];
-  const names = [];
-  const walk = async (dir) => {
-    let entries = [];
-    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (e.isDirectory()) await walk(path.join(dir, e.name));
-      else if (e.name.endsWith('.json')) names.push(path.join(dir, e.name));
-    }
-  };
-  await walk(root.path);
-  for (const f of names) {
-    if (pathBelongsTo(path.basename(f), cfg.exclude)) continue;
-    try {
-      const j = JSON.parse(await fs.promises.readFile(f, 'utf8'));
-      for (const k of ['cwd', 'originCwd']) if (typeof j[k] === 'string' && j[k]) out.add(canonicalize(normalizeHome(j[k]), cfg.forms));
-    } catch { /* kein JSON */ }
-  }
-  return [...out].sort();
+  return [...new Set((await sidebarCwds(cfg)).map((c) => canonicalize(c, cfg.forms)))].sort();
 }
 
 // Liefert die fehlenden Chunks datei-weise in einem Durchlauf je Datei
@@ -149,6 +131,8 @@ export async function resolveProjects(snap, cfg, opts, log) {
   for (const canonical of Array.isArray(snap.projects) ? snap.projects : []) {
     const local = localize(canonical, cur.forms);
     if (!/@@CLYDE_/.test(local) && fs.existsSync(local)) continue;
+    // liegt in einem Git-Repo, das der Pull gleich hierher klont
+    if (!/@@CLYDE_/.test(local) && clonableRoots(opts.repos, cur.forms).some((r) => isUnder(local, r))) continue;
     const shown = localize(canonical, sourceForms);
     if (opts.createMissing) {
       const dir = freeDir(normalizeHome(path.join(path.resolve(opts.createMissing), lastSegment(shown))));
@@ -226,8 +210,31 @@ export async function pull(cfg, opts, log) {
   if (!snap) { log.info('Auf dem Server liegt noch kein Stand. Erst auf einem PC "clyde push" ausfuehren.'); return { changed: false }; }
   log.info(`${opts.exact ? 'Stand' : 'Gemeinsamer Stand'} ${snap.id}, zuletzt von ${snap.host} (${snap.user}), ${snap.createdAt}: ${snap.stats.files} Dateien, ${fmtBytes(snap.stats.bytes)}`);
   const chatTitles = await projectChats(client, snap).catch(() => new Map());
-  cfg = await resolveProjects(snap, cfg, { ...opts, chatTitles }, log);
+  const repos = await reposToSync(snap, cfg, opts, log);
+  cfg = await resolveProjects(snap, cfg, { ...opts, chatTitles, repos }, log);
   if (snap.home !== cfg.home) log.info(`Home-Verzeichnis wird umgeschrieben: ${snap.home} -> ${cfg.home}`);
+  const result = await pullFiles(client, snap, cfg, opts, log);
+  if (repos.length) result.repos = await syncRepos(repos, cfg, opts, log);
+  return result;
+}
+
+// Git-Repos aus dem Stand, sofern gewuenscht und git vorhanden
+async function reposToSync(snap, cfg, opts, log) {
+  if (opts.noRepos || cfg.raw.repos === false || !snap.repos?.length) return [];
+  if (!(await gitAvailable())) { log.warn(`Der Stand kennt ${snap.repos.length} Git-Repo(s), aber git ist hier nicht installiert; sie werden nicht geklont.`); return []; }
+  return snap.repos;
+}
+
+// Repos klonen oder vorspulen (im Trockenlauf nur anzeigen). Vorspulen aendert
+// Projektdateien, deshalb gilt dieselbe Pruefung auf arbeitende Chats wie beim Pull.
+async function syncRepos(repos, cfg, opts, log) {
+  const actions = await planRepos(repos, cfg);
+  if (opts.dryRun) { for (const l of describeRepoPlan(actions)) log.info(l); return { planned: actions }; }
+  if (actions.some((a) => a.action === 'update')) checkGuard('Git-Repos vorspulen', opts.force, log);
+  return applyRepos(actions, log);
+}
+
+async function pullFiles(client, snap, cfg, opts, log) {
   log.info('Scanne lokalen Zustand ...');
   if (opts.exact) {
     const local = await buildLocalManifest(cfg, log, { rehash: opts.rehash });

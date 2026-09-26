@@ -24,7 +24,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 2. **Node.js 20 or newer** on each computer.
 3. **The Clyde command-line tool** on each computer. `/clyde:setup` checks for it
    and offers to install the pinned release from GitHub:
-   `npm install -g github:Gardosen/clyde#v0.4.3`
+   `npm install -g github:Gardosen/clyde#v0.4.4`
 4. **Claude Code** – the desktop app's Code tab or the terminal. The commands run
    local programs and do not work in claude.ai chat or Cowork.
 
@@ -37,6 +37,11 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 | `/clyde:pull` | Fetches chats from the account's other computers and keeps this computer's own chats |
 | `/clyde:status` | Shows the latest snapshot, local changes and chats that are busy |
 | `/clyde:delete [id ...]` | Deletes stored snapshots on the backend after confirmation and frees the space |
+| `/clyde:repos` | Chooses which Git repositories every computer clones and keeps up to date |
+
+Git repositories a chat works in are taken along automatically: a pull clones
+them into a missing project folder or fast-forwards a clean clone. Local changes
+are never touched.
 
 Use a dedicated chat for Clyde. That chat is never synchronised itself. The app
 can stay open; Clyde only waits while another chat is in the middle of an answer.
@@ -51,15 +56,21 @@ Clyde is transparent about its data flow:
   `~/.claude/plans`, `~/.claude/history.jsonl` and the desktop app's chat list.
   From the app's settings file `claude_desktop_config.json` it reads only the
   names of your chat groups and which chat belongs to which group; nothing else
-  from that file is read out or sent.
+  from that file is read out or sent. If a chat's project folder is a Git
+  repository, it reads the repository's remote address, branch and commit.
 - **Sends** that data, split into compressed chunks, only to the backend URL you
   enter in `/clyde:setup`, authenticated with your token. Nothing goes anywhere
   else. Chat transcripts contain everything written in them, including file
-  paths, code and command output.
-- **Changes** these same folders on `/clyde:pull`, after writing a backup.
+  paths, code and command output. Git remote addresses are sent without any
+  credentials; project files themselves are never sent.
+- **Changes** these same folders on `/clyde:pull`, after writing a backup. With
+  Git repositories, a pull clones a missing project folder from its remote or
+  fast-forwards a clean one; folders with local changes or own commits are never
+  touched (`--no-repos` turns this off).
 - **Stores** its settings and a hash cache in `~/.clyde`.
-- **Runs** only the `clyde` command-line tool, and `npm install` of the pinned
-  release when you agree to it during setup.
+- **Runs** the `clyde` command-line tool, which calls `git` for the repository
+  steps above, and `npm install` of the pinned release when you agree to it
+  during setup.
 
 ## Deutsch in Kürze
 

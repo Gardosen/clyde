@@ -70,6 +70,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | `/clyde:pull` | Fetches new and changed chats from the other computers; asks about missing project folders |
 | `/clyde:status` | Latest snapshot, what is waiting to be pushed or pulled, busy chats |
 | `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
+| `/clyde:repos` | Choose which Git repositories every computer clones and keeps up to date |
 
 How it behaves:
 
@@ -287,11 +288,52 @@ placeholders, running chats and whether server and token work.
 | `clyde doctor` | Check the setup |
 | `clyde delete ID [ID ...]` | Delete snapshots and clean up; `--dry-run` shows the effect, `--yes` confirms without a terminal, the newest only with `--force` |
 | `clyde gc` | Free space of chunks no snapshot needs |
+| `clyde repos [--scan \| --add PATH ... \| --remove PATH]` | Git repositories taken along (see below) |
+| `--no-repos` (push, pull) | Leave Git repositories out this time |
 | `--rehash` (push, pull, status) | Ignore the hash cache and hash everything again |
 
 Before every pull Clyde copies the previous state to
 `%USERPROFILE%\.clyde\backups\<timestamp>`; the last three are kept. Backups
 with a name (`map-…`, `relocate-…`) are never removed automatically.
+
+## Git repositories of your projects
+
+Clyde syncs chats, not project files, but it can take your Git repositories
+along. It includes a repository automatically if a chat's project folder is
+inside it. You can select more, for example projects below a shared parent
+folder:
+
+```bash
+clyde repos --scan                    # repositories in and directly below your chats' folders
+clyde repos --add "C:\Users\me\Projects\game" "C:\Users\me\Projects\engine"
+clyde repos --remove "C:\Users\me\Projects\engine"
+clyde repos                           # what the shared state contains
+```
+
+In the plugin, `/clyde:repos` shows the candidates with remote, size and warnings
+and lets you pick them. A selection takes effect with the next push. Every
+selected repository is cloned on all computers of the account. After you
+deselect one, the next push removes it from the shared state. Existing clones
+stay, but are no longer updated.
+
+For every repository:
+
+- **Push** records the repository's root folder (neutral, like all paths), its
+  remote address without any credentials, the branch and the commit. It warns
+  about anything that would not reach the other computers: commits that are not
+  pushed, uncommitted changes, a missing remote or upstream.
+- **Pull** clones the repository into the project folder if that folder is
+  missing or empty. An existing clean clone of the same remote is fast-forwarded
+  (`git fetch` + `git merge --ff-only`). Folders with local changes, own commits,
+  another remote or no Git at all are left alone and reported. `--dry-run` shows
+  what would be cloned.
+- A chat started in a parent folder such as `Projects` does not bring along
+  every repository below it; select the ones you want.
+- Cloning uses this computer's Git access (SSH key or Git credential manager).
+  Clyde never asks for passwords. Only common remote addresses are cloned (https,
+  ssh, git, `user@host:path`, absolute paths).
+- Turn it off with `--no-repos`, or permanently with `"repos": false` in
+  `~/.clyde/config.json`.
 
 ## Moving chats to a different project folder
 

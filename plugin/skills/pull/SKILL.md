@@ -62,7 +62,9 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
 
 3. **Plan zeigen:** die Zeile `Plan: ...` kurz wiedergeben. Werden Chats
    entfernt, weil sie auf einem anderen PC geloescht wurden, diese Chats nennen
-   und vor dem echten Pull bestaetigen lassen. Sonst direkt weiter.
+   und vor dem echten Pull bestaetigen lassen. Zeilen `Git: ... wird geklont`
+   nennen (Ordner und Remote); das Klonen kann bei grossen Repos dauern. Sonst
+   direkt weiter.
 
 4. **Pull:** `clyde pull $ARGUMENTS --clyde-chat --no-ask`
    - Abbruch, weil andere Chats arbeiten: die Chats nennen, spaeter erneut
@@ -75,3 +77,8 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
    (diese Dateien bleiben unveraendert). Jede Zeile `Hinweis:` weitergeben, besonders: geoeffnete Chats
    erst nach einem Neustart der App weiterverwenden; neue Chats erscheinen in der
    Seitenleiste eventuell erst nach einem Neustart.
+   Die Zeile `Git-Repos: ...` wiedergeben (geklont, vorgespult, uebersprungen mit
+   Grund). Schlaegt Klonen oder Holen fehl, fehlt meist der Zugang zum Remote auf
+   diesem PC (SSH-Schluessel oder Git-Anmeldung einrichten, dann erneut
+   `/clyde:pull`). Uebersprungene Repos mit lokalen Aenderungen oder eigenen
+   Commits nie selbst zuruecksetzen oder ueberschreiben.
