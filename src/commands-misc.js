@@ -371,19 +371,48 @@ export async function repos(cfg, opts, log) {
 // die es auf diesem PC gibt. Clyde schreibt die Einstellungsdatei der App nicht;
 // der Skill /clyde:groups setzt das ueber die Seitenleisten-Werkzeuge der App um.
 export async function groups(cfg, opts, log) {
-  const { localSidebarChats, desiredGroups, desiredPins, loadSidebarPull } = await import('./appgroups.js');
+  const A = await import('./appgroups.js');
   const snap = await fetchLatest(new Client(cfg.server, cfg.token));
-  const chats = await localSidebarChats(cfg);
-  const d = desiredGroups(snap?.appGroups, (id) => chats.has(id));
-  const p = desiredPins(chats, snap?.appGroups?.starred, loadSidebarPull());
+  const shared = snap?.appGroups || null;
+  const localGroups = A.readAppGroups(cfg);
+  const links = A.loadGroupLinks(cfg);
+  // Nach dem Umsetzen in der App: Zuordnung festhalten, Pull-Merkliste leeren
+  if (opts.done) {
+    A.saveGroupLinks(cfg, A.linkMatchingGroups(shared, localGroups, links));
+    A.clearSidebarPull();
+    log.info('Gruppen, Anheften und Titel sind abgeglichen.');
+    return { done: true };
+  }
+  const chats = await A.localSidebarChats(cfg);
+  const pulled = A.loadSidebarPull();
+  const d = A.desiredGroups(shared, (id) => chats.has(id));
+  const p = A.desiredPins(chats, shared?.starred, pulled);
+  const renames = A.groupRenames(shared, localGroups, links);
+  // Gruppe hier zu jeder Soll-Gruppe: umbenannte, zugeordnete oder gleichnamige
+  const localAll = Object.entries(localGroups?.scopes || {}).flatMap(([scope, s]) => (s.groups || []).map((g) => ({ ...g, scope })));
+  const sharedName = (scope, id) => (shared?.scopes?.[scope]?.groups || []).find((g) => g.id === id)?.name;
+  const localIdFor = (name) => {
+    const key = name.toLowerCase();
+    const r = renames.find((x) => x.to.toLowerCase() === key);
+    if (r) return r.groupId;
+    for (const [scope, list] of Object.entries(links)) {
+      for (const l of list) if ((sharedName(scope, l.sharedId) || '').toLowerCase() === key && localAll.some((g) => g.id === l.localId)) return l.localId;
+    }
+    return localAll.find((g) => String(g.name).trim().toLowerCase() === key)?.id || null;
+  };
+  const groupsOut = d.groups.map((g) => ({ name: g.name, groupId: localIdFor(g.name), sessions: g.sessions }));
+  // Titel, die der letzte Pull an bekannten Chats geaendert hat
+  const retitle = Object.entries(pulled).filter(([id, e]) => chats.has(id) && typeof e?.title === 'string' && e.title).map(([id, e]) => ({ id, title: e.title }));
   const title = (id) => chats.get(id)?.title || id;
-  const named = new Set([...d.groups.flatMap((g) => g.sessions), ...p.pin, ...p.unpin]);
-  const result = { snapshot: snap?.id || null, groups: d.groups, pin: p.pin, unpin: p.unpin, titles: Object.fromEntries([...named].map((id) => [id, title(id)])) };
+  const named = new Set([...d.groups.flatMap((g) => g.sessions), ...p.pin, ...p.unpin, ...retitle.map((r) => r.id)]);
+  const result = { snapshot: snap?.id || null, renames, groups: groupsOut, pin: p.pin, unpin: p.unpin, retitle, titles: Object.fromEntries([...named].map((id) => [id, title(id)])) };
   if (opts.json) { process.stdout.write(`${JSON.stringify(result, null, 1)}\n`); return result; }
-  if (!d.groups.length && !p.pin.length && !p.unpin.length) { log.info('Im gemeinsamen Stand sind keine Gruppen oder angehefteten Chats fuer diesen PC vermerkt.'); return result; }
+  if (!d.groups.length && !p.pin.length && !p.unpin.length && !renames.length && !retitle.length) { log.info('Im gemeinsamen Stand sind keine Gruppen oder angehefteten Chats fuer diesen PC vermerkt.'); return result; }
+  for (const r of renames) log.info(`Gruppe umbenennen: "${r.from}" -> "${r.to}"`);
   for (const g of d.groups) log.info(`${g.name} (${g.sessions.length}): ${g.sessions.map(title).join(' | ')}`);
   if (p.pin.length) log.info(`Angeheftet: ${p.pin.map(title).join(' | ')}`);
   if (p.unpin.length) log.info(`Auf einem anderen PC geloest: ${p.unpin.map(title).join(' | ')}`);
+  if (retitle.length) log.info(`Titel vom letzten Pull: ${retitle.map((r) => r.title).join(' | ')}`);
   log.info('In die App uebernehmen: /clyde:groups im Clyde-Chat (Clyde schreibt die Einstellungen der App nicht selbst).');
   return result;
 }

@@ -30,7 +30,9 @@ Befehle
                                     im Terminal bestaetigen oder --yes anhaengen
   map --remove N [--dry-run|--yes]  Projekt-Zuordnung entfernen, Chats zurueckstellen
   status [-v]                       Unterschiede zum letzten Snapshot, laufende Chats
-  groups [--json]                   Gruppen der Chatliste laut gemeinsamem Stand (fuer /clyde:groups)
+  groups [--json]                   Gruppen, Umbenennungen, angeheftete Chats und Titel laut
+                                    gemeinsamem Stand (fuer /clyde:groups)
+  groups --done                     nach dem Umsetzen in der App: Zuordnung der Gruppen merken
   update [--check] [--yes] [X.Y.Z]  Plugin in der App und CLI auf die neueste Version von GitHub
                                     bringen; --check zeigt nur, was veraltet ist
   repos                             Git-Repos im gemeinsamen Stand und eigene Auswahl
@@ -106,6 +108,7 @@ try {
       push: { type: 'string' },
       message: { type: 'string', short: 'm' },
       ignore: { type: 'boolean', default: false },
+      done: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -130,7 +133,7 @@ const opts = {
   plan: expandHome(values.plan), chat: values.chat, to: expandHome(values.to), undo: expandHome(values.undo),
   exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
   force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, noRepos: values['no-repos'], scan: values.scan, check: values.check, json: values.json,
-  commit: expandHome(values.commit), gitPush: expandHome(values.push), message: values.message, ignore: values.ignore, verbose: values.verbose,
+  commit: expandHome(values.commit), gitPush: expandHome(values.push), message: values.message, ignore: values.ignore, done: values.done, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
 const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots, repos, groups, update };

@@ -72,7 +72,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
 | `/clyde:repos` | Choose which Git repositories every computer clones and keeps up to date |
 | `/clyde:update` | Updates the Clyde plugin in the app and the Clyde CLI to the latest release, after asking |
-| `/clyde:groups` | Apply the chat list groups and pinned chats of the other computers in the app, without a restart (also done at the end of `/clyde:pull`) |
+| `/clyde:groups` | Apply the chat list groups (including renamed ones), pinned chats and chat titles of the other computers in the app, without a restart (also done at the end of `/clyde:pull`) |
 
 How it behaves:
 
@@ -398,8 +398,10 @@ output names the backup folder.
   account's shared state (the latest snapshot) and the state this computer last
   synced (the base, `~/.clyde/base-*.json`). If only one side changed, that side
   wins, deletions included. If both changed, `.jsonl` transcripts and `MEMORY.md`
-  are merged line by line; otherwise the newer version wins. Without a base (first
-  sync) the states are combined.
+  are merged line by line. Chat list entries are merged field by field against
+  the base, so a rename on one computer and simply opening the chat on another
+  both survive. Otherwise the newer version wins. Without a base (first sync)
+  the states are combined.
 - **Push:** the server lists the chunks it is missing; only those are uploaded,
   compressed. A 100 MB chat that was only appended to since the last push costs a
   single chunk. The merged state is then stored as a new snapshot. If another
@@ -454,8 +456,16 @@ output names the backup folder.
   (`isStarred`). A pin removed on another computer is also removed here, but only
   when the last pull brought that change. Until then the running app would
   overwrite it with its old state.
-  `clyde groups` shows the grouping in the terminal. Groups with the same name
-  are treated as one group across computers.
+  **Renames:** a chat's title lives in its entry and travels with it. The pull
+  step sets the new title in the running app, so the app does not write the old
+  one back. Groups get a different ID on every computer. Clyde therefore keeps
+  a mapping for each computer: this group ↔ the group in the shared state, plus
+  both names at the last sync (`~/.clyde/groups-*.json`). A renamed group is
+  pushed, even when nothing else changed, and renamed on the other computers
+  instead of being created again. If two computers rename the same group at the
+  same time, the rename pushed first wins and the others follow it.
+  `clyde groups` shows all of this in the terminal. Groups with the same name
+  are treated as one group across computers. Deleting a group is not synced.
 - Snapshots in the old v1 format are rejected by the client; push again from the
   source computer.
 - **Format v3 (0.4.2):** snapshots now escape literal placeholders. The server

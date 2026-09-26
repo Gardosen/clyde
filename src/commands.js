@@ -14,7 +14,7 @@ import { saveConfig, configFromRaw } from './config.js';
 import { canonicalize, localize, allForms, normalizeHome } from './rewrite.js';
 import { fmtBytes } from './log.js';
 import { syncPush, prepare, localPlan, fetchLatest, resolveUnions, describe, remoteContent, localCanonical, projectChats } from './sync.js';
-import { flatten, saveBase, loadBase, keyOf } from './merge.js';
+import { flatten, saveBase, loadBase, keyOf, loadBaseEntries } from './merge.js';
 import { changeMapping } from './remap.js';
 import { saveSidebarPull } from './appgroups.js';
 import { checkVersions } from './version.js';
@@ -221,7 +221,13 @@ async function finishPull({ cfg, opts, log, snap, local, plan, client, extra, su
   const result = await applyPlan({ cfg, local, plan, client, opts, log, extra });
   // Geaenderte Eintraege schon bekannter Chats merken (fuer /clyde:groups)
   const skippedSet = new Set(result.skipped || []);
-  saveSidebarPull(plan.write.filter((f) => f.root === 'desktop-sessions' && !f.isNew && !skippedSet.has(f)).map((f) => path.basename(f.lp, '.json')).filter((id) => id.startsWith('local_')));
+  const pulled = {};
+  for (const f of plan.write) {
+    const id = path.basename(f.lp, '.json');
+    if (f.root !== 'desktop-sessions' || f.isNew || skippedSet.has(f) || !id.startsWith('local_')) continue;
+    try { const j = JSON.parse(fs.readFileSync(f.abs, 'utf8')); pulled[id] = { title: typeof j.title === 'string' ? j.title : null, starred: typeof j.isStarred === 'boolean' ? j.isStarred : null }; } catch { /* kein Eintrag */ }
+  }
+  saveSidebarPull(pulled);
   // Ausgelassene Dateien behalten ihre alte Basis, damit der naechste Abgleich
   // die Aenderung des Kontos erneut sieht, statt sie mit dem lokalen Stand zu ueberschreiben
   const keep = new Map((result.skipped || []).map((f) => { const k = keyOf(f.root, f.p); return [k, oldBase.get(k) ?? null]; }));
@@ -277,7 +283,8 @@ async function pullFiles(client, snap, cfg, opts, log) {
     return finishPull({ cfg, opts, log, snap, local, plan, client, extra: null, summary: {}, baseFiles: R });
   }
   const { local, R, decisions } = await prepare(cfg, client, snap, log, { rehash: opts.rehash });
-  const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r));
+  const entries = loadBaseEntries(cfg);
+  const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r), (d) => (entries.has(d.key) ? Buffer.from(entries.get(d.key)) : null));
   const plan = localPlan(cfg, decisions, snap);
   const s = describe(decisions);
   if (plan.stale) log.warn(`${plan.stale} Dateien enthalten Stellen, die Clyde nicht verlustfrei umschreiben kann (z. B. beschaedigte Zeilen); sie bleiben unveraendert.`);

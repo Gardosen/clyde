@@ -7,8 +7,8 @@ import { applyPlan } from './restore.js';
 import { canonicalSource, chunkStream } from './chunker.js';
 import { localize } from './rewrite.js';
 import { pathBelongsTo } from './session.js';
-import { readAppGroups } from './appgroups.js';
-import { loadBase, saveBase, flatten, decide, unionLines, chunksOf, sigOf } from './merge.js';
+import { readAppGroups, reconcileGroups, loadGroupLinks, saveGroupLinks } from './appgroups.js';
+import { loadBase, saveBase, flatten, decide, unionLines, chunksOf, sigOf, isSidebarEntry, mergeEntry, loadBaseEntries } from './merge.js';
 import { fmtBytes } from './log.js';
 import { collectRepos, mergeRepos, reposSignature } from './repos.js';
 import { saveConfig } from './config.js';
@@ -45,12 +45,21 @@ async function remoteContent(client, f) {
 }
 
 // Zusammengefuehrte Inhalte bilden; liefert Zusatz-Chunks (Hash -> Daten)
-async function resolveUnions(decisions, getA, getB) {
+// getBase (optional): Inhalt zur Basis, fuer Chat-Eintraege der Seitenleiste
+async function resolveUnions(decisions, getA, getB, getBase = null) {
   const extra = new Map();
   for (const d of decisions) {
     if (!d.union) continue;
     const [a, b] = [await getA(d), await getB(d)];
     const aNewer = (d.l.m || 0) >= (d.r.m || 0);
+    if (isSidebarEntry(d.root, d.p)) {
+      const base = getBase ? await getBase(d) : null;
+      const buf = (aNewer ? mergeEntry(a, b, base) : mergeEntry(b, a, base)) || (aNewer ? a : b);
+      const chunks = await chunksOf(buf);
+      for (const c of chunks) extra.set(c.hash, c.data);
+      d.merged = { root: d.root, p: d.p, s: buf.length, m: Math.max(d.l.m || 0, d.r.m || 0), c: chunks.map((c) => c.hash) };
+      continue;
+    }
     const byUuid = d.p.toLowerCase().endsWith('.jsonl');
     const buf = aNewer ? unionLines(a, b, { byUuid }) : unionLines(b, a, { byUuid });
     const chunks = await chunksOf(buf);
@@ -198,14 +207,20 @@ export async function syncPush(cfg, opts, log) {
     const { local, L, R, decisions } = await prepare(cfg, client, snap, log, { rehash: opts.rehash, forget });
     const ex = local.stats.excluded ? `, ${local.stats.excluded} Dateien des Clyde-Chats ausgelassen` : '';
     log.info(`  ${local.stats.files} Dateien, ${fmtBytes(local.stats.bytes)} (${local.stats.hashedFiles} neu gehasht${ex})`);
-    const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r));
+    const entries = loadBaseEntries(cfg);
+    const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r), (d) => (entries.has(d.key) ? Buffer.from(entries.get(d.key)) : null));
     const info = describe(decisions);
     const PUSH_KINDS = ['local', 'local-delete', 'union', 'conflict-local', 'conflict-keep-local'];
     const repos = mine ? mergeRepos(snap?.repos, mine.repos, mine.drop) : (snap?.repos || []);
     const reposChanged = reposSignature(repos) !== reposSignature(snap?.repos);
-    const changed = !snap ? L.size > 0 || repos.length > 0 : decisions.some((d) => PUSH_KINDS.includes(d.kind)) || reposChanged;
+    // Gruppen: Umbenennungen und neue Gruppen von hier einbringen (loesen allein
+    // einen neuen Stand aus; andere Einordnungen reisen mit dem naechsten Push mit)
+    const grp = reconcileGroups(snap?.appGroups || null, readAppGroups(cfg), loadGroupLinks(cfg));
+    const groupsChanged = grp.renamed.length > 0 || grp.added.length > 0;
+    const changed = !snap ? L.size > 0 || repos.length > 0 : decisions.some((d) => PUSH_KINDS.includes(d.kind)) || reposChanged || groupsChanged;
     if (snap && !changed) {
       saveBase(cfg, L, snap.id);
+      saveGroupLinks(cfg, grp.links);
       log.info(`Nichts Neues hochzuladen, der gemeinsame Stand ${snap.id} enthaelt alles von diesem PC.${info.pull || info.pullDelete ? ` Auf dem Server gibt es ${info.pull + info.pullDelete} Aenderungen anderer PCs: "clyde pull" holt sie.` : ''}`);
       return { id: snap.id, uploadedChunks: 0, uploadedBytes: 0, unchanged: true, stats: snap.stats, excluded: local.stats.excluded };
     }
@@ -232,7 +247,7 @@ export async function syncPush(cfg, opts, log) {
       host: os.hostname(), user: os.userInfo().username, home: cfg.home, projectDrive: cfg.projectDrive, platform: process.platform,
       rootPaths: Object.fromEntries(Object.entries(cfg.roots).map(([n, r]) => [n, r.path])),
       projects: [...new Set([...(snap?.projects || []), ...(await collectProjects(cfg))])].sort(),
-      appGroups: mergeAppGroups(snap?.appGroups, readAppGroups(cfg)),
+      appGroups: grp.appGroups,
       repos,
       roots,
       stats: statsOf(roots),
@@ -246,6 +261,8 @@ export async function syncPush(cfg, opts, log) {
       throw e;
     }
     saveBase(cfg, L, manifest.id);
+    saveGroupLinks(cfg, grp.links);
+    for (const r of grp.renamed) log.info(`Gruppe umbenannt: "${r.from}" -> "${r.to}" (die anderen PCs uebernehmen das mit /clyde:pull)`);
     if (mine?.drop.length) { const raw = { ...cfg.raw }; delete raw.dropRepos; saveConfig(raw); } // abgewaehlte Repos sind raus
     log.info(`Gemeinsamer Stand ${manifest.id} gespeichert: ${manifest.stats.files} Dateien. Von diesem PC: ${info.push} neu/geaendert, ${info.pushDelete} geloescht${info.union ? `, ${info.union} zusammengefuehrt` : ''}${repos.length ? `, ${repos.length} Git-Repo(s) vermerkt` : ''}; ${up.chunks} Chunks / ${fmtBytes(up.bytes)} uebertragen.`);
     return { id: manifest.id, uploadedChunks: up.chunks, uploadedBytes: up.bytes, stats: manifest.stats, projects: manifest.projects, excluded: local.stats.excluded, info };

@@ -60,7 +60,8 @@ test('Gruppen: anderer PC bekommt den Soll-Zustand nur fuer Chats, die er hat', 
   await pull(M.cfg(), { noAsk: true }, quiet);
   fs.rmSync(path.join(M.base, 'sessions', 'org', 'acct', 'local_c.json')); // diesen Chat gibt es hier nicht
   const r = await groups(M.cfg(), {}, quiet);
-  assert.deepEqual(r.groups, [{ name: 'Archiv', sessions: ['local_a', 'local_b'] }], 'Reihenfolge wie in der Seitenleiste, nur vorhandene Chats');
+  assert.deepEqual(r.groups.map(({ name, sessions }) => ({ name, sessions })), [{ name: 'Archiv', sessions: ['local_a', 'local_b'] }], 'Reihenfolge wie in der Seitenleiste, nur vorhandene Chats');
+  assert.equal(r.groups[0].groupId, null, 'Gruppe gibt es hier noch nicht');
   assert.deepEqual(r.pin, ['local_d'], 'ohne isStarred im Eintrag gilt die Liste der App-Einstellungen');
   assert.deepEqual(r.unpin, []);
   assert.equal(r.titles.local_a, 'Chat a');
@@ -111,7 +112,8 @@ test('Anheften: isStarred im Chat-Eintrag zaehlt; Loesen nur, wenn der Pull es m
   assert.deepEqual(r.unpin, ['local_p1'], 'geloest auf dem anderen PC');
   assert.equal(r.titles.local_p1, 'Chat p1');
 
-  // hier wieder angeheftet (die App schreibt isStarred): nicht erneut loesen
+  // nach dem Abgleich (--done) nicht erneut loesen, auch wenn hier wieder angeheftet wird
+  await groups(M.cfg(), { done: true }, quiet);
   entry(M.base, 'p1', true);
   r = await groups(M.cfg(), {}, quiet);
   assert.deepEqual(r.unpin, []);

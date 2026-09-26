@@ -3,7 +3,7 @@ name: pull
 description: Neue und geaenderte Chats der anderen PCs dieses Clyde-Kontos holen; eigene Chats bleiben erhalten. Fragt nach Projektordnern, die es hier nicht gibt. Nur auf ausdruecklichen Aufruf.
 disable-model-invocation: true
 argument-hint: "[--exact STAND-ID]"
-allowed-tools: Bash(clyde:*), AskUserQuestion, mcp__ccd_sidebar__list_groups, mcp__ccd_sidebar__create_group, mcp__ccd_sidebar__move_sessions, mcp__ccd_sidebar__set_pinned, mcp__ccd_session_mgmt__list_sessions
+allowed-tools: Bash(clyde:*), AskUserQuestion, mcp__ccd_sidebar__list_groups, mcp__ccd_sidebar__create_group, mcp__ccd_sidebar__rename_group, mcp__ccd_sidebar__move_sessions, mcp__ccd_sidebar__set_pinned, mcp__ccd_session_mgmt__list_sessions, mcp__ccd_session_mgmt__set_session_title
 ---
 
 # Clyde: Pull
@@ -86,21 +86,28 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
    `/clyde:pull`). Uebersprungene Repos mit lokalen Aenderungen oder eigenen
    Commits nie selbst zuruecksetzen oder ueberschreiben.
 
-6. **Gruppen und angeheftete Chats uebernehmen** (nur wenn der Pull nicht
-   abgebrochen wurde; nur in der App, im Terminal ueberspringen):
-   - `clyde groups --json` liefert `groups` (Name + `sessions`), `pin` und `unpin`.
-     Alle leer: nichts tun.
+6. **Seitenleiste abgleichen** (nur wenn der Pull nicht abgebrochen wurde; nur in
+   der App, im Terminal ueberspringen): genau wie im Skill `/clyde:groups`:
+   - `clyde groups --json` liefert `renames`, `groups` (Name, `groupId`,
+     `sessions`), `pin`, `unpin` und `retitle`. Alle leer: `clyde groups --done`,
+     sonst nichts tun.
    - `mcp__ccd_sidebar__list_groups` und `mcp__ccd_session_mgmt__list_sessions`
      (`limit: 500`, `include_archived: true`).
-   - Fehlende Gruppen (Name, Gross/Klein egal) mit `mcp__ccd_sidebar__create_group`
-     anlegen. Je Gruppe ein `mcp__ccd_sidebar__move_sessions` mit den Chats, die die
-     App kennt und die hier noch in keiner Gruppe liegen (`group` null). Chats, die
-     schon anders eingeordnet sind, bleiben dort.
-   - Danach (Verschieben loest das Anheften): jeden Chat aus `pin`, den die App
-     kennt und der jetzt nicht angeheftet ist, mit `mcp__ccd_sidebar__set_pinned`
-     (`pinned: true`) anheften; jeden Chat aus `unpin`, der angeheftet ist, mit
-     `pinned: false` loesen.
-   - Nie Gruppen loeschen, umbenennen oder Chats nach „Ungrouped" verschieben.
-   - Melden, wie viele Chats einsortiert, angeheftet oder geloest wurden. Chats,
-     die die App noch nicht kennt, werden erst nach einem Neustart sichtbar
-     (angeheftete dann schon angeheftet); danach `/clyde:groups` aufrufen.
+   - In dieser Reihenfolge:
+     a) Gruppen aus `renames`, die in der App noch `from` heissen, mit
+        `mcp__ccd_sidebar__rename_group` in `to` umbenennen (nicht, wenn es `to`
+        schon als andere Gruppe gibt).
+     b) Zielgruppe je Eintrag aus `groups`: `groupId`, sonst gleicher Name, sonst
+        mit `mcp__ccd_sidebar__create_group` anlegen (nur wenn Chats zu verschieben sind).
+     c) Je Gruppe ein `mcp__ccd_sidebar__move_sessions` mit den Chats, die die App
+        kennt und die hier in keiner Gruppe liegen (`group` null).
+     d) Chats aus `pin`, die jetzt nicht angeheftet sind: `mcp__ccd_sidebar__set_pinned`
+        `pinned: true`; Chats aus `unpin`, die angeheftet sind: `pinned: false`.
+     e) Chats aus `retitle`, deren Titel in der App anders lautet:
+        `mcp__ccd_session_mgmt__set_session_title`.
+     f) `clyde groups --done`.
+   - Nie Gruppen loeschen, nie Chats nach „Ungrouped" verschieben, nie andere Chats
+     loesen oder umbenennen als die aus den Listen.
+   - Melden, was umbenannt, einsortiert, angeheftet oder geloest wurde. Chats, die
+     die App noch nicht kennt, werden erst nach einem Neustart sichtbar (dann schon
+     mit Titel und Pin); danach `/clyde:groups` aufrufen.

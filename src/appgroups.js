@@ -8,6 +8,7 @@
 // Zugangsdaten. Clyde liest deshalb ausschliesslich diese Gruppen-Angaben und
 // gibt sonst nichts aus der Datei weiter.
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { pathBelongsTo } from './session.js';
 import { clydeHome } from './paths.js';
@@ -96,28 +97,30 @@ export async function localSidebarChats(cfg) {
 // Aenderung (etwa angeheftet/geloest auf einem anderen PC) noch nicht und wuerde
 // sie beim naechsten Speichern ueberschreiben; /clyde:groups gleicht das an.
 const lastPullFile = () => path.join(clydeHome(), 'last-pull-sidebar.json');
-export function saveSidebarPull(ids) {
+// entries: { local_...: { title, starred } } so, wie der Pull sie geschrieben hat
+export function saveSidebarPull(entries) {
   try {
     fs.mkdirSync(clydeHome(), { recursive: true });
-    fs.writeFileSync(lastPullFile(), JSON.stringify({ at: new Date().toISOString(), ids: [...new Set(ids)] }));
+    fs.writeFileSync(lastPullFile(), JSON.stringify({ at: new Date().toISOString(), entries }));
   } catch { /* nur ein Hinweis fuer /clyde:groups */ }
 }
 export function loadSidebarPull() {
-  try { const j = JSON.parse(fs.readFileSync(lastPullFile(), 'utf8')); return Array.isArray(j.ids) ? j.ids : []; } catch { return []; }
+  try { const j = JSON.parse(fs.readFileSync(lastPullFile(), 'utf8')); return j.entries && typeof j.entries === 'object' ? j.entries : {}; } catch { return {}; }
 }
+export function clearSidebarPull() { try { fs.rmSync(lastPullFile(), { force: true }); } catch { /* egal */ } }
 
 // Anheften: angeheftet sind Chats mit isStarred im eigenen Eintrag (nach dem Pull
 // ist das der zusammengefuehrte Stand); aeltere Staende kennen nur die Liste in
 // den App-Einstellungen. Loesen nur bei Chats, deren Eintrag der letzte Pull
 // geaendert hat und die dort ausdruecklich nicht angeheftet sind.
-export function desiredPins(chats, legacyStarred = [], pulledIds = []) {
+export function desiredPins(chats, legacyStarred = [], pulled = {}) {
   const legacy = new Set((legacyStarred || []).map((k) => String(k).replace(/^code:/, '')));
   const pin = [];
   const unpin = [];
   for (const [id, c] of chats) {
     if (c.starred === true || (c.starred === null && legacy.has(id))) pin.push(id);
   }
-  for (const id of pulledIds) if (chats.get(id)?.starred === false) unpin.push(id);
+  for (const [id, e] of Object.entries(pulled || {})) if (chats.has(id) && e?.starred === false) unpin.push(id);
   return { pin, unpin };
 }
 
@@ -145,4 +148,107 @@ export function desiredGroups(appGroups, present) {
     }
   }
   return { groups: [...byName.values()].filter((g) => g.sessions.length) };
+}
+
+// ---- Gruppen ueber PCs hinweg: Zuordnung und Umbenennen ----
+//
+// Jede Gruppe hat in der App eine ID (cg-...). Legt /clyde:groups eine Gruppe auf
+// einem anderen PC an, bekommt sie dort eine eigene ID. Clyde merkt sich je PC,
+// welche Gruppe hier zu welcher Gruppe im gemeinsamen Stand gehoert, und die
+// Namen beider beim letzten Abgleich:
+//   { sharedId, localId, sharedName, localName }
+// Damit ist ein Umbenennen auf einer Seite von einem Umbenennen auf der anderen
+// zu unterscheiden. Bei gleichzeitigem Umbenennen gilt der gemeinsame Stand.
+const linksFile = (cfg) => {
+  const id = crypto.createHash('sha256').update(JSON.stringify([cfg.server, cfg.roots['desktop-sessions']?.path || ''])).digest('hex').slice(0, 16);
+  return path.join(clydeHome(), `groups-${id}.json`);
+};
+export function loadGroupLinks(cfg) {
+  try { const j = JSON.parse(fs.readFileSync(linksFile(cfg), 'utf8')); return j && typeof j.scopes === 'object' ? j.scopes : {}; } catch { return {}; }
+}
+export function saveGroupLinks(cfg, scopes) {
+  try {
+    fs.mkdirSync(clydeHome(), { recursive: true });
+    fs.writeFileSync(linksFile(cfg), JSON.stringify({ version: 1, savedAt: new Date().toISOString(), scopes }));
+  } catch { /* Zuordnung wird beim naechsten Abgleich neu gebildet */ }
+}
+const nameKey = (n) => String(n || '').trim().toLowerCase();
+const clone = (x) => JSON.parse(JSON.stringify(x));
+
+// Push: lokale Gruppen in den gemeinsamen Stand einbringen. Liefert die neuen
+// Gruppen des Stands, die neue Zuordnung und die eingebrachten Umbenennungen.
+export function reconcileGroups(shared, local, links) {
+  if (!local || !Object.keys(local.scopes || {}).length) return { appGroups: shared || null, links, renamed: [], added: [] };
+  const out = shared ? clone(shared) : { scopes: {}, starred: [] };
+  out.scopes = out.scopes || {};
+  const newLinks = { ...links };
+  const renamed = [];
+  const added = [];
+  for (const [scope, L] of Object.entries(local.scopes)) {
+    const S = out.scopes[scope] || (out.scopes[scope] = { groups: [], assignments: {}, order: {} });
+    S.groups = S.groups || []; S.assignments = S.assignments || {}; S.order = S.order || {};
+    const old = links[scope] || [];
+    const list = [];
+    const toShared = new Map();
+    for (const g of L.groups || []) {
+      const link = old.find((l) => l.localId === g.id);
+      let sg = link ? S.groups.find((x) => x.id === link.sharedId) : null;
+      if (link && sg) {
+        const localRenamed = g.name !== link.localName;
+        const sharedRenamed = sg.name !== link.sharedName;
+        if (localRenamed && !sharedRenamed && g.name !== sg.name) { renamed.push({ from: sg.name, to: g.name }); sg.name = g.name; }
+      }
+      if (!sg) sg = S.groups.find((x) => x.id === g.id) || S.groups.find((x) => nameKey(x.name) === nameKey(g.name));
+      if (!sg) { sg = { id: g.id, name: g.name }; S.groups.push(sg); added.push(g.name); }
+      toShared.set(g.id, sg.id);
+      list.push({ sharedId: sg.id, localId: g.id, sharedName: sg.name, localName: g.name });
+    }
+    for (const [k, gid] of Object.entries(L.assignments || {})) S.assignments[k] = toShared.get(gid) || gid;
+    for (const [gid, order] of Object.entries(L.order || {})) S.order[toShared.get(gid) || gid] = order;
+    newLinks[scope] = list;
+  }
+  out.starred = [...new Set([...(out.starred || []), ...(local.starred || [])])];
+  return { appGroups: out, links: newLinks, renamed, added };
+}
+
+// Pull: welche Gruppen hier umzubenennen sind (der gemeinsame Stand hat einen
+// anderen Namen, und hier wurde seit dem letzten Abgleich nicht umbenannt)
+export function groupRenames(shared, local, links) {
+  const out = [];
+  for (const [scope, list] of Object.entries(links || {})) {
+    const S = shared?.scopes?.[scope];
+    const L = local?.scopes?.[scope];
+    if (!S || !L) continue;
+    for (const link of list) {
+      const sg = (S.groups || []).find((x) => x.id === link.sharedId);
+      const lg = (L.groups || []).find((x) => x.id === link.localId);
+      if (!sg || !lg || sg.name === lg.name) continue;
+      const localRenamed = lg.name !== link.localName;
+      const sharedRenamed = sg.name !== link.sharedName;
+      if (localRenamed && !sharedRenamed) continue; // eigene Umbenennung, kommt mit dem naechsten Push
+      out.push({ groupId: lg.id, from: lg.name, to: sg.name });
+    }
+  }
+  return out;
+}
+
+// Nach /clyde:groups: Zuordnung fuer Gruppen festhalten, die jetzt gleich heissen
+// (neu angelegte oder umbenannte). Abweichende bleiben unveraendert, damit ein
+// hier noch nicht gepushtes Umbenennen nicht verloren geht.
+export function linkMatchingGroups(shared, local, links) {
+  const out = { ...links };
+  for (const [scope, L] of Object.entries(local?.scopes || {})) {
+    const S = shared?.scopes?.[scope];
+    if (!S) continue;
+    const list = [...(links[scope] || [])];
+    for (const lg of L.groups || []) {
+      const i = list.findIndex((l) => l.localId === lg.id);
+      const sg = i >= 0 ? (S.groups || []).find((x) => x.id === list[i].sharedId) : (S.groups || []).find((x) => x.id === lg.id || nameKey(x.name) === nameKey(lg.name));
+      if (!sg || sg.name !== lg.name) continue;
+      const entry = { sharedId: sg.id, localId: lg.id, sharedName: sg.name, localName: lg.name };
+      if (i >= 0) list[i] = entry; else list.push(entry);
+    }
+    out[scope] = list;
+  }
+  return out;
 }
