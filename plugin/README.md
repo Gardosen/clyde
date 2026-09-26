@@ -24,7 +24,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 2. **Node.js 20 or newer** on each computer.
 3. **The Clyde command-line tool** on each computer. `/clyde:setup` checks for it
    and offers to install the pinned release from GitHub:
-   `npm install -g github:Gardosen/clyde#v0.4.8`
+   `npm install -g github:Gardosen/clyde#v0.4.9`
 4. **Claude Code** – the desktop app's Code tab or the terminal. The commands run
    local programs and do not work in claude.ai chat or Cowork.
 
@@ -39,7 +39,7 @@ Project, backend and full documentation: https://github.com/Gardosen/clyde
 | `/clyde:delete [id ...]` | Deletes stored snapshots on the backend after confirmation and frees the space |
 | `/clyde:repos` | Chooses which Git repositories every computer clones and keeps up to date |
 | `/clyde:update` | Updates this plugin and the Clyde CLI to the latest release, after asking |
-| `/clyde:groups` | Files chats into the same sidebar groups as on your other computers, using the app's sidebar tools (no restart; also part of `/clyde:pull`) |
+| `/clyde:groups` | Files chats into the same sidebar groups and pins the same chats as on your other computers, using the app's sidebar tools (no restart; also part of `/clyde:pull`) |
 
 Git repositories a chat works in are taken along automatically: a pull clones
 them into a missing project folder or fast-forwards a clean clone. Local changes

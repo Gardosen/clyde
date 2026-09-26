@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathBelongsTo } from './session.js';
+import { clydeHome } from './paths.js';
 
 export function desktopConfigPath(cfg) {
   const root = cfg.roots['desktop-sessions'];
@@ -80,21 +81,51 @@ export async function localSidebarChats(cfg) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { await walk(p); continue; }
       if (!e.name.startsWith('local_') || !e.name.endsWith('.json') || pathBelongsTo(e.name, cfg.exclude || [])) continue;
-      let title = null;
-      try { title = JSON.parse(await fs.promises.readFile(p, 'utf8')).title || null; } catch { /* kein JSON */ }
-      out.set(e.name.slice(0, -5), title);
+      let j = {};
+      try { j = JSON.parse(await fs.promises.readFile(p, 'utf8')) || {}; } catch { /* kein JSON */ }
+      // "angeheftet" steht beim Chat selbst (isStarred); fehlt das Feld: unbekannt
+      out.set(e.name.slice(0, -5), { title: j.title || null, starred: typeof j.isStarred === 'boolean' ? j.isStarred : null });
     }
   };
   await walk(root.path);
   return out;
 }
 
+// Welche Chat-Eintraege hat der letzte Pull an bereits vorhandenen Chats
+// geaendert? Haelt die laufende App einen solchen Chat im Speicher, kennt sie die
+// Aenderung (etwa angeheftet/geloest auf einem anderen PC) noch nicht und wuerde
+// sie beim naechsten Speichern ueberschreiben; /clyde:groups gleicht das an.
+const lastPullFile = () => path.join(clydeHome(), 'last-pull-sidebar.json');
+export function saveSidebarPull(ids) {
+  try {
+    fs.mkdirSync(clydeHome(), { recursive: true });
+    fs.writeFileSync(lastPullFile(), JSON.stringify({ at: new Date().toISOString(), ids: [...new Set(ids)] }));
+  } catch { /* nur ein Hinweis fuer /clyde:groups */ }
+}
+export function loadSidebarPull() {
+  try { const j = JSON.parse(fs.readFileSync(lastPullFile(), 'utf8')); return Array.isArray(j.ids) ? j.ids : []; } catch { return []; }
+}
+
+// Anheften: angeheftet sind Chats mit isStarred im eigenen Eintrag (nach dem Pull
+// ist das der zusammengefuehrte Stand); aeltere Staende kennen nur die Liste in
+// den App-Einstellungen. Loesen nur bei Chats, deren Eintrag der letzte Pull
+// geaendert hat und die dort ausdruecklich nicht angeheftet sind.
+export function desiredPins(chats, legacyStarred = [], pulledIds = []) {
+  const legacy = new Set((legacyStarred || []).map((k) => String(k).replace(/^code:/, '')));
+  const pin = [];
+  const unpin = [];
+  for (const [id, c] of chats) {
+    if (c.starred === true || (c.starred === null && legacy.has(id))) pin.push(id);
+  }
+  for (const id of pulledIds) if (chats.get(id)?.starred === false) unpin.push(id);
+  return { pin, unpin };
+}
+
 // Soll-Gruppierung aus dem gemeinsamen Stand, nur fuer Chats, die es hier gibt:
 // Gruppen nach Namen (gleichnamige aus mehreren Bereichen zusammen), in
-// Seitenleisten-Reihenfolge, dazu die angehefteten Chats
+// Seitenleisten-Reihenfolge (Anheften: desiredPins)
 export function desiredGroups(appGroups, present) {
   const byName = new Map();
-  const pinned = [];
   const idOf = (k) => String(k).replace(/^code:/, '');
   for (const s of Object.values(appGroups?.scopes || {})) {
     const names = new Map((s.groups || []).map((g) => [g.id, String(g.name).trim()]));
@@ -113,6 +144,5 @@ export function desiredGroups(appGroups, present) {
       if (![...byName.values()].some((g) => g.sessions.includes(id))) entry.sessions.push(id);
     }
   }
-  for (const k of appGroups?.starred || []) { const id = idOf(k); if (present(id) && !pinned.includes(id)) pinned.push(id); }
-  return { groups: [...byName.values()].filter((g) => g.sessions.length), pinned };
+  return { groups: [...byName.values()].filter((g) => g.sessions.length) };
 }

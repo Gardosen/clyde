@@ -61,7 +61,8 @@ test('Gruppen: anderer PC bekommt den Soll-Zustand nur fuer Chats, die er hat', 
   fs.rmSync(path.join(M.base, 'sessions', 'org', 'acct', 'local_c.json')); // diesen Chat gibt es hier nicht
   const r = await groups(M.cfg(), {}, quiet);
   assert.deepEqual(r.groups, [{ name: 'Archiv', sessions: ['local_a', 'local_b'] }], 'Reihenfolge wie in der Seitenleiste, nur vorhandene Chats');
-  assert.deepEqual(r.pinned, ['local_d']);
+  assert.deepEqual(r.pin, ['local_d'], 'ohne isStarred im Eintrag gilt die Liste der App-Einstellungen');
+  assert.deepEqual(r.unpin, []);
   assert.equal(r.titles.local_a, 'Chat a');
 });
 
@@ -86,4 +87,32 @@ test('Gruppen: Push vom Mac nach /clyde:groups erzeugt keine doppelten Gruppen i
   assert.deepEqual(s.groups.map((g) => g.name).sort(), ['Archiv', 'Web']);
   assert.equal(s.assignments['code:local_b'], 'g1');
   assert.ok(!JSON.stringify(snap).includes('geheim'), 'nichts ausser den Gruppen aus der Einstellungsdatei');
+});
+
+test('Anheften: isStarred im Chat-Eintrag zaehlt; Loesen nur, wenn der Pull es mitgebracht hat', async () => {
+  const A = pc('A');
+  const M = pc('Mac');
+  const entry = (base, id, starred) => write(path.join(base, 'sessions', 'org', 'acct', `local_${id}.json`), JSON.stringify({ title: `Chat ${id}`, cwd: tmp, isStarred: starred }));
+  entry(A.base, 'p1', true);
+  entry(A.base, 'p2', false);
+  await push(A.cfg(), {}, quiet);
+  await pull(M.cfg(), { noAsk: true }, quiet);
+  let r = await groups(M.cfg(), {}, quiet);
+  assert.ok(r.pin.includes('local_p1') && !r.pin.includes('local_p2'), JSON.stringify(r.pin));
+  assert.deepEqual(r.unpin, [], 'neue Chats liest die App beim Start selbst richtig ein');
+
+  // auf PC A: p1 geloest, p2 angeheftet
+  entry(A.base, 'p1', false);
+  entry(A.base, 'p2', true);
+  await push(A.cfg(), {}, quiet);
+  await pull(M.cfg(), { noAsk: true }, quiet);
+  r = await groups(M.cfg(), {}, quiet);
+  assert.ok(r.pin.includes('local_p2') && !r.pin.includes('local_p1'), JSON.stringify(r.pin));
+  assert.deepEqual(r.unpin, ['local_p1'], 'geloest auf dem anderen PC');
+  assert.equal(r.titles.local_p1, 'Chat p1');
+
+  // hier wieder angeheftet (die App schreibt isStarred): nicht erneut loesen
+  entry(M.base, 'p1', true);
+  r = await groups(M.cfg(), {}, quiet);
+  assert.deepEqual(r.unpin, []);
 });

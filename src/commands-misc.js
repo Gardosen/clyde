@@ -371,15 +371,19 @@ export async function repos(cfg, opts, log) {
 // die es auf diesem PC gibt. Clyde schreibt die Einstellungsdatei der App nicht;
 // der Skill /clyde:groups setzt das ueber die Seitenleisten-Werkzeuge der App um.
 export async function groups(cfg, opts, log) {
-  const { localSidebarChats, desiredGroups } = await import('./appgroups.js');
+  const { localSidebarChats, desiredGroups, desiredPins, loadSidebarPull } = await import('./appgroups.js');
   const snap = await fetchLatest(new Client(cfg.server, cfg.token));
   const chats = await localSidebarChats(cfg);
   const d = desiredGroups(snap?.appGroups, (id) => chats.has(id));
-  const result = { snapshot: snap?.id || null, ...d, titles: Object.fromEntries([...chats].filter(([id]) => d.groups.some((g) => g.sessions.includes(id)) || d.pinned.includes(id))) };
+  const p = desiredPins(chats, snap?.appGroups?.starred, loadSidebarPull());
+  const title = (id) => chats.get(id)?.title || id;
+  const named = new Set([...d.groups.flatMap((g) => g.sessions), ...p.pin, ...p.unpin]);
+  const result = { snapshot: snap?.id || null, groups: d.groups, pin: p.pin, unpin: p.unpin, titles: Object.fromEntries([...named].map((id) => [id, title(id)])) };
   if (opts.json) { process.stdout.write(`${JSON.stringify(result, null, 1)}\n`); return result; }
-  if (!d.groups.length && !d.pinned.length) { log.info('Im gemeinsamen Stand sind keine Gruppen fuer die Chats dieses PCs vermerkt.'); return result; }
-  for (const g of d.groups) log.info(`${g.name} (${g.sessions.length}): ${g.sessions.map((id) => chats.get(id) || id).join(' | ')}`);
-  if (d.pinned.length) log.info(`Angeheftet: ${d.pinned.map((id) => chats.get(id) || id).join(' | ')}`);
+  if (!d.groups.length && !p.pin.length && !p.unpin.length) { log.info('Im gemeinsamen Stand sind keine Gruppen oder angehefteten Chats fuer diesen PC vermerkt.'); return result; }
+  for (const g of d.groups) log.info(`${g.name} (${g.sessions.length}): ${g.sessions.map(title).join(' | ')}`);
+  if (p.pin.length) log.info(`Angeheftet: ${p.pin.map(title).join(' | ')}`);
+  if (p.unpin.length) log.info(`Auf einem anderen PC geloest: ${p.unpin.map(title).join(' | ')}`);
   log.info('In die App uebernehmen: /clyde:groups im Clyde-Chat (Clyde schreibt die Einstellungen der App nicht selbst).');
   return result;
 }

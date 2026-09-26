@@ -72,7 +72,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
 | `/clyde:repos` | Choose which Git repositories every computer clones and keeps up to date |
 | `/clyde:update` | Updates the Clyde plugin in the app and the Clyde CLI to the latest release, after asking |
-| `/clyde:groups` | Apply the chat list groups of the other computers in the app, without a restart (also done at the end of `/clyde:pull`) |
+| `/clyde:groups` | Apply the chat list groups and pinned chats of the other computers in the app, without a restart (also done at the end of `/clyde:pull`) |
 
 How it behaves:
 
@@ -449,7 +449,11 @@ output names the backup folder.
   app settings. Instead, `/clyde:pull` (or `/clyde:groups` on its own) applies the
   groups with the app's own sidebar tools, live and without a restart. Missing
   groups are created by name, and only chats that are still ungrouped are filed.
-  Chats you grouped differently on a computer stay where they are.
+  Chats you grouped differently on a computer stay where they are. Pinned chats
+  are pinned the same way. The app stores the pin in each chat's entry
+  (`isStarred`). A pin removed on another computer is also removed here, but only
+  when the last pull brought that change. Until then the running app would
+  overwrite it with its old state.
   `clyde groups` shows the grouping in the terminal. Groups with the same name
   are treated as one group across computers.
 - Snapshots in the old v1 format are rejected by the client; push again from the

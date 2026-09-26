@@ -16,6 +16,7 @@ import { fmtBytes } from './log.js';
 import { syncPush, prepare, localPlan, fetchLatest, resolveUnions, describe, remoteContent, localCanonical, projectChats } from './sync.js';
 import { flatten, saveBase, loadBase, keyOf } from './merge.js';
 import { changeMapping } from './remap.js';
+import { saveSidebarPull } from './appgroups.js';
 import { checkVersions } from './version.js';
 import { sidebarCwds, gitAvailable, clonableRoots, planRepos, describeRepoPlan, applyRepos } from './repos.js';
 import { isUnder } from './remap.js';
@@ -218,6 +219,9 @@ async function finishPull({ cfg, opts, log, snap, local, plan, client, extra, su
   checkGuard('Pull', opts.force, log);
   const oldBase = loadBase(cfg).files;
   const result = await applyPlan({ cfg, local, plan, client, opts, log, extra });
+  // Geaenderte Eintraege schon bekannter Chats merken (fuer /clyde:groups)
+  const skippedSet = new Set(result.skipped || []);
+  saveSidebarPull(plan.write.filter((f) => f.root === 'desktop-sessions' && !f.isNew && !skippedSet.has(f)).map((f) => path.basename(f.lp, '.json')).filter((id) => id.startsWith('local_')));
   // Ausgelassene Dateien behalten ihre alte Basis, damit der naechste Abgleich
   // die Aenderung des Kontos erneut sieht, statt sie mit dem lokalen Stand zu ueberschreiben
   const keep = new Map((result.skipped || []).map((f) => { const k = keyOf(f.root, f.p); return [k, oldBase.get(k) ?? null]; }));

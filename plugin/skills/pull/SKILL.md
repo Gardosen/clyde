@@ -86,17 +86,21 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
    `/clyde:pull`). Uebersprungene Repos mit lokalen Aenderungen oder eigenen
    Commits nie selbst zuruecksetzen oder ueberschreiben.
 
-6. **Gruppen der Chatliste uebernehmen** (nur wenn der Pull nicht abgebrochen wurde;
-   nur in der App, im Terminal ueberspringen):
-   - `clyde groups --json` liefert `groups` (Name + `sessions`) und `pinned`. Leer:
-     nichts tun.
+6. **Gruppen und angeheftete Chats uebernehmen** (nur wenn der Pull nicht
+   abgebrochen wurde; nur in der App, im Terminal ueberspringen):
+   - `clyde groups --json` liefert `groups` (Name + `sessions`), `pin` und `unpin`.
+     Alle leer: nichts tun.
    - `mcp__ccd_sidebar__list_groups` und `mcp__ccd_session_mgmt__list_sessions`
      (`limit: 500`, `include_archived: true`).
    - Fehlende Gruppen (Name, Gross/Klein egal) mit `mcp__ccd_sidebar__create_group`
      anlegen. Je Gruppe ein `mcp__ccd_sidebar__move_sessions` mit den Chats, die die
      App kennt und die hier noch in keiner Gruppe liegen (`group` null). Chats, die
-     schon anders eingeordnet sind, bleiben dort. Danach Chats aus `pinned`, die
-     noch nicht angeheftet sind, mit `mcp__ccd_sidebar__set_pinned` anheften.
+     schon anders eingeordnet sind, bleiben dort.
+   - Danach (Verschieben loest das Anheften): jeden Chat aus `pin`, den die App
+     kennt und der jetzt nicht angeheftet ist, mit `mcp__ccd_sidebar__set_pinned`
+     (`pinned: true`) anheften; jeden Chat aus `unpin`, der angeheftet ist, mit
+     `pinned: false` loesen.
    - Nie Gruppen loeschen, umbenennen oder Chats nach „Ungrouped" verschieben.
-   - Melden, wie viele Chats einsortiert wurden. Chats, die die App noch nicht kennt,
-     werden erst nach einem Neustart sichtbar; danach `/clyde:groups` aufrufen.
+   - Melden, wie viele Chats einsortiert, angeheftet oder geloest wurden. Chats,
+     die die App noch nicht kennt, werden erst nach einem Neustart sichtbar
+     (angeheftete dann schon angeheftet); danach `/clyde:groups` aufrufen.
