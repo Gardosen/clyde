@@ -27,9 +27,10 @@ Befehle
                                     im Terminal bestaetigen oder --yes anhaengen
   map --remove N [--dry-run|--yes]  Projekt-Zuordnung entfernen, Chats zurueckstellen
   status [-v]                       Unterschiede zum letzten Snapshot, laufende Chats
-  list                              Snapshots auf dem Server auflisten
+  list                              Staende auf dem Server mit frei werdendem Speicher
   doctor                            Pfade, Platzhalter, Prozesse und Server pruefen
-  delete ID                         Snapshot auf dem Server loeschen
+  delete ID [ID ...]                Staende auf dem Server loeschen und aufraeumen; neuester
+                                    Stand nur mit --force; ohne Terminal mit --yes bestaetigen
   gc                                nicht mehr referenzierte Chunks auf dem Server loeschen
   relocate --chat TITEL --to ORDNER Chat einem anderen Projektordner zuordnen (App geschlossen)
   relocate --plan PLAN.json         mehrere Chats laut Plan umziehen; --dry-run zeigt nur an
@@ -40,7 +41,8 @@ Optionen
                  er wird nie hochgeladen und bei keinem Pull angefasst
   --force        trotz arbeitender Chats bzw. laufender App ausfuehren (nicht empfohlen)
   --dry-run      bei pull und map nur anzeigen, was passieren wuerde
-  --yes          bei map ohne Rueckfrage ausfuehren (fuer Plugin und Skripte)
+  --yes          bei map und delete ohne Rueckfrage ausfuehren (fuer Plugin und Skripte)
+  --rehash       bei push, pull und status den Hash-Cache ignorieren und alles neu hashen
   --no-backup    bei pull kein Backup unter ~/.clyde/backups anlegen
   --no-ask       bei pull fehlende Projektordner nur melden, nicht nachfragen
   -v, --verbose  mehr Details
@@ -80,6 +82,7 @@ try {
       'no-ask': { type: 'boolean', default: false },
       create: { type: 'boolean', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
+      rehash: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -103,7 +106,7 @@ const opts = {
   remove: values.remove, add: values.add, list: values.list, clydeChat: values['clyde-chat'],
   plan: expandHome(values.plan), chat: values.chat, to: expandHome(values.to), undo: expandHome(values.undo),
   exact: values.exact, createMissing: expandHome(values['create-missing']), create: values.create,
-  force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, verbose: values.verbose,
+  force: values.force, dryRun: values['dry-run'], noBackup: values['no-backup'], noAsk: values['no-ask'], yes: values.yes, rehash: values.rehash, verbose: values.verbose,
   id: positionals[1], args: positionals.slice(1).map(expandHome),
 };
 const commands = { init, push, pull, map, status, list, doctor, gc, delete: del, relocate, merge: mergeSnapshots };

@@ -95,6 +95,23 @@ export class Store {
     return { deleted, kept, recent, freedBytes };
   }
 
+  // Je Stand: Chunks, die nur er nutzt, und ihr Platz auf dem Server. So viel wird
+  // beim Loeschen dieses einen Stands mindestens frei (mehrere zusammen: evtl. mehr).
+  async exclusive() {
+    const mans = await this.listSnapshots();
+    const count = new Map();
+    const owner = new Map();
+    for (const man of mans) for (const h of manifestHashes(man)) { count.set(h, (count.get(h) || 0) + 1); owner.set(h, man.id); }
+    const out = Object.fromEntries(mans.map((m) => [m.id, { chunks: 0, bytes: 0 }]));
+    for (const [h, n] of count) {
+      if (n !== 1) continue;
+      const o = out[owner.get(h)];
+      o.chunks++;
+      try { o.bytes += (await fs.promises.stat(this.blobPath(h))).size; } catch { /* fehlt */ }
+    }
+    return out;
+  }
+
   // Tatsaechlich belegter Platz (Chunks komprimiert, jeder Chunk nur einmal)
   async usage() {
     let chunks = 0, bytes = 0;

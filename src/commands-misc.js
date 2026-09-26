@@ -14,6 +14,7 @@ import { loadLast, registerClydeChat } from './commands.js';
 import { planRelocation, applyRelocation, undoRelocation } from './relocate.js';
 import { fetchLatest, prepare, describe } from './sync.js';
 import { changeMapping } from './remap.js';
+import { loadBase } from './merge.js';
 import { configFromRaw } from './config.js';
 import { fmtBytes } from './log.js';
 
@@ -141,14 +142,18 @@ export async function map(cfg, opts, log) {
   entries.forEach(([c, l], i) => log.info(`${String(i + 1).padStart(2)}. ${c}\n    -> ${l}`));
 }
 
+// Staende mit Groesse und dem Platz, den Loeschen mindestens freigibt
 export async function list(cfg, opts, log) {
-  const { snapshots } = await new Client(cfg.server, cfg.token).listSnapshots();
-  if (!snapshots.length) { log.info('Noch keine Snapshots auf dem Server.'); return; }
-  const last = loadLast();
+  const { snapshots } = await new Client(cfg.server, cfg.token).listSnapshots({ sizes: true });
+  if (!snapshots.length) { log.info('Noch keine Snapshots auf dem Server.'); return { snapshots }; }
+  snapshots.forEach((s, i) => { s.newest = s.newest ?? i === 0; }); // aeltere Server liefern das Feld nicht
+  const base = loadBase(cfg).snapshotId;
   for (const s of snapshots) {
-    const mark = last && last.id === s.id ? ' <- lokal' : '';
-    log.info(`${s.id}  ${s.createdAt}  ${s.host}/${s.user}  ${s.stats.files} Dateien, ${fmtBytes(s.stats.bytes)}${mark}`);
+    const marks = [s.newest && 'neuester, gemeinsamer Stand', s.id === base && 'Basis dieses PCs'].filter(Boolean);
+    const free = s.exclusive ? `, frei beim Loeschen: ${fmtBytes(s.exclusive.bytes)}` : '';
+    log.info(`${s.id}  ${s.createdAt}  ${s.host}/${s.user}  ${s.stats.files} Dateien, ${fmtBytes(s.stats.bytes)}${free}${marks.length ? `  [${marks.join(', ')}]` : ''}`);
   }
+  return { snapshots, base };
 }
 
 export async function status(cfg, opts, log) {
@@ -160,7 +165,7 @@ export async function status(cfg, opts, log) {
   log.info(`Lokal zuletzt: ${last ? `${last.direction} ${last.id}` : 'noch nie synchronisiert'}`);
   for (const l of sessionLines()) log.info(l);
   const snap = latest ? await fetchLatest(client).catch(() => null) : null;
-  const { decisions, local } = await prepare(cfg, client, snap, log);
+  const { decisions, local } = await prepare(cfg, client, snap, log, { rehash: opts.rehash });
   const s = describe(decisions);
   log.info(`Lokal: ${local.stats.files} Dateien, ${fmtBytes(local.stats.bytes)}`);
   log.info(`Zum Hochladen (clyde push): ${s.push} neu oder geaendert, ${s.pushDelete} geloescht${s.union ? `, ${s.union} beidseitig geaendert (werden zusammengefuehrt)` : ''}`);
@@ -240,8 +245,38 @@ export async function gc(cfg, opts, log) {
     + (r.recent ? ` ${r.recent} nicht mehr benoetigte Chunks sind juenger als ${r.gcGraceMinutes} Minuten und werden beim naechsten Aufraeumen entfernt.` : ''));
 }
 
+// Staende loeschen und danach aufraeumen. Der neueste Stand nur mit --force.
+// Ohne Terminal (Plugin) nur mit --yes.
 export async function del(cfg, opts, log) {
-  if (!opts.id) throw new Error('Aufruf: clyde delete SNAPSHOT-ID');
-  await new Client(cfg.server, cfg.token).deleteSnapshot(opts.id);
-  log.info(`Snapshot ${opts.id} geloescht. "clyde gc" gibt den Speicher frei.`);
+  const ids = [...new Set(opts.args || [])];
+  if (!ids.length) throw new Error('Aufruf: clyde delete STAND-ID [STAND-ID ...] [--yes] [--force]   (IDs siehe clyde list)');
+  const client = new Client(cfg.server, cfg.token);
+  const { snapshots } = await client.listSnapshots({ sizes: true });
+  snapshots.forEach((s, i) => { s.newest = s.newest ?? i === 0; });
+  const byId = new Map(snapshots.map((s) => [s.id, s]));
+  const unknown = ids.filter((id) => !byId.has(id));
+  if (unknown.length) throw new Error(`Unbekannte Staende: ${unknown.join(', ')} (siehe clyde list)`);
+  const chosen = ids.map((id) => byId.get(id));
+  const base = loadBase(cfg).snapshotId;
+  log.info(`Zu loeschen (${chosen.length}):`);
+  for (const s of chosen) log.info(`  ${s.id}  ${s.host}/${s.user}  ${s.stats.files} Dateien, frei: ${fmtBytes(s.exclusive?.bytes || 0)}`);
+  log.info(`Frei werden mindestens ${fmtBytes(chosen.reduce((a, s) => a + (s.exclusive?.bytes || 0), 0))} (gemeinsam genutzte Chunks evtl. mehr).`);
+  const newest = chosen.find((s) => s.newest);
+  if (newest) {
+    log.warn(`${newest.id} ist der neueste, gemeinsame Stand des Kontos. Danach gilt der naechstaeltere. PCs, die ${newest.id} schon geholt haben, vereinigen beim naechsten Abgleich nur (nichts wird geloescht) und laden ihre Chats erneut hoch.`);
+  }
+  if (chosen.some((s) => s.id === base)) log.info('Hinweis: Einer davon ist die Basis dieses PCs; der naechste Abgleich hier vereinigt nur.');
+  if (opts.dryRun) { log.info('Trockenlauf, nichts geloescht.'); return { deleted: 0, newest: !!newest }; }
+  if (newest && !opts.force) throw new Error('Den neuesten Stand nur mit --force loeschen.');
+  if (!opts.yes) {
+    const ask = askFor(opts);
+    if (!ask) throw new Error('Nichts geloescht. Mit --yes bestaetigen.');
+    const a = String(await ask('Loeschen? [j/N] ')).trim().toLowerCase();
+    if (!['j', 'ja', 'y', 'yes'].includes(a)) { log.info('Abgebrochen, nichts geloescht.'); return { deleted: 0 }; }
+  }
+  for (const s of chosen) await client.deleteSnapshot(s.id, { force: !!s.newest });
+  const r = await client.gc();
+  log.info(`${chosen.length} ${chosen.length === 1 ? 'Stand' : 'Staende'} geloescht, ${fmtBytes(r.freedBytes)} freigegeben.`
+    + (r.recent ? ` ${r.recent} weitere Chunks werden frei, sobald sie aelter als ${r.gcGraceMinutes} Minuten sind (Schutz fuer laufende Pushs); dann "clyde gc".` : ''));
+  return { deleted: chosen.length, freedBytes: r.freedBytes, recent: r.recent };
 }

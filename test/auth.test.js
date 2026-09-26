@@ -120,7 +120,8 @@ test('Benutzer sind getrennt, Admin darf lesend hineinsehen', async () => {
   assert.equal((await admin('PUT', '/snapshots/x-1?user=bob', emptySnap('x-1'))).status, 403, 'in fremde Ablage nichts hochladen');
   assert.equal((await bob('DELETE', '/snapshots/alt-1?user=marco')).status, 403, 'Nicht-Admins loeschen nichts Fremdes');
   assert.equal((await admin('GET', '/usage?user=bob')).body.snapshots, 1);
-  assert.equal((await admin('DELETE', '/snapshots/bob-1?user=bob')).status, 200, 'Admin darf fremde Staende loeschen');
+  assert.equal((await admin('DELETE', '/snapshots/bob-1?user=bob')).status, 409, 'neuester Stand nur ausdruecklich');
+  assert.equal((await admin('DELETE', '/snapshots/bob-1?user=bob&force=1')).status, 200, 'Admin darf fremde Staende loeschen');
   assert.ok(!fs.existsSync(path.join(DATA, 'u', 'bob', 'snapshots', 'bob-1.json')));
   assert.equal((await admin('POST', '/gc?user=bob')).status, 200, 'und dort aufraeumen');
 });

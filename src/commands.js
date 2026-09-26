@@ -14,7 +14,7 @@ import { saveConfig, configFromRaw } from './config.js';
 import { canonicalize, localize, allForms, normalizeHome } from './rewrite.js';
 import { fmtBytes } from './log.js';
 import { syncPush, prepare, localPlan, fetchLatest, resolveUnions, describe, remoteContent, localCanonical, projectChats } from './sync.js';
-import { flatten, saveBase } from './merge.js';
+import { flatten, saveBase, loadBase, keyOf } from './merge.js';
 import { changeMapping } from './remap.js';
 
 export { MANIFEST_VERSION } from './sync.js';
@@ -205,8 +205,12 @@ async function finishPull({ cfg, opts, log, snap, local, plan, client, extra, su
     return { changed: false, plan, ...info };
   }
   checkGuard('Pull', opts.force, log);
+  const oldBase = loadBase(cfg).files;
   const result = await applyPlan({ cfg, local, plan, client, opts, log, extra });
-  saveBase(cfg, baseFiles, snap.id);
+  // Ausgelassene Dateien behalten ihre alte Basis, damit der naechste Abgleich
+  // die Aenderung des Kontos erneut sieht, statt sie mit dem lokalen Stand zu ueberschreiben
+  const keep = new Map((result.skipped || []).map((f) => { const k = keyOf(f.root, f.p); return [k, oldBase.get(k) ?? null]; }));
+  saveBase(cfg, baseFiles, snap.id, keep);
   saveLast({ id: snap.id, createdAt: snap.createdAt, direction: 'pull' });
   log.info(`Fertig (${result.downloadedChunks} Chunks / ${fmtBytes(result.downloadedBytes)} geladen${result.backupDir ? `, Sicherung unter ${result.backupDir}` : ''}).`);
   for (const h of hints) log.info(`Hinweis: ${h}`);
@@ -226,14 +230,14 @@ export async function pull(cfg, opts, log) {
   if (snap.home !== cfg.home) log.info(`Home-Verzeichnis wird umgeschrieben: ${snap.home} -> ${cfg.home}`);
   log.info('Scanne lokalen Zustand ...');
   if (opts.exact) {
-    const local = await buildLocalManifest(cfg, log);
+    const local = await buildLocalManifest(cfg, log, { rehash: opts.rehash });
     const plan = planRestore(local.roots, snap.roots, cfg.roots, cfg.forms, log, cfg.exclude);
     const newCount = plan.write.filter((f) => f.isNew).length;
     log.info(`Plan (exakt): ${newCount} neu, ${plan.write.length - newCount} geaendert (${fmtBytes(plan.bytesToWrite)}), ${plan.delete.length} loeschen, ${plan.unchanged} unveraendert`);
     const R = flatten(snap.roots, Object.keys(cfg.roots));
     return finishPull({ cfg, opts, log, snap, local, plan, client, extra: null, summary: {}, baseFiles: R });
   }
-  const { local, R, decisions } = await prepare(cfg, client, snap, log);
+  const { local, R, decisions } = await prepare(cfg, client, snap, log, { rehash: opts.rehash });
   const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r));
   const plan = localPlan(cfg, decisions, snap);
   const s = describe(decisions);

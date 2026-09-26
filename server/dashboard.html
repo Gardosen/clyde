@@ -149,7 +149,7 @@
   <section data-view="snaps" hidden class="stack" style="max-width:1000px">
     <section class="card">
       <h2>Gespeicherte Stände</h2>
-      <p class="muted" style="margin-top:0">Jeder Push legt einen Stand an. Gleiche Inhalte liegen auf dem Server nur einmal. Löschen gibt deshalb nur den Platz frei, den kein anderer Stand mehr braucht.</p>
+      <p class="muted" style="margin-top:0">Jeder Push legt einen Stand an. Gleiche Inhalte liegen auf dem Server nur einmal. Löschen gibt deshalb nur den Platz frei, den kein anderer Stand mehr braucht („frei beim Löschen“). Ältere Stände lassen sich gefahrlos löschen. Ein PC, dessen letzter Abgleich einen gelöschten Stand betraf, vereinigt beim nächsten Mal nur; Löschungen anderer PCs kommen dort dann einmal nicht an.</p>
       <div id="usage" class="summary"></div>
       <div class="toolbar">
         <button id="delSelected" class="danger" type="button" disabled>Ausgewählte löschen</button>
@@ -157,7 +157,7 @@
         <label>nur die neuesten <input id="keepN" type="number" min="1" value="5" style="width:4.5em"> behalten</label>
         <button id="keepNewest" class="danger" type="button">Ältere löschen</button>
       </div>
-      <table id="snaps"><thead><tr><th><input id="selAll" type="checkbox" title="alle auswählen"></th><th>Stand</th><th>Erstellt</th><th>Quell-PC</th><th class="num">Dateien</th><th class="num">Größe</th><th></th></tr></thead><tbody></tbody></table>
+      <table id="snaps"><thead><tr><th><input id="selAll" type="checkbox" title="alle auswählen"></th><th>Stand</th><th>Erstellt</th><th>Quell-PC</th><th class="num">Dateien</th><th class="num">Größe</th><th class="num">Frei beim Löschen</th><th></th></tr></thead><tbody></tbody></table>
       <div id="snapMsg" class="msg"></div>
     </section>
   </section>
@@ -427,7 +427,7 @@ const selectedSnaps = () => [...document.querySelectorAll('#snaps .sel:checked')
 const syncSnapButtons = () => { $('#delSelected').disabled = !selectedSnaps().length; };
 async function loadSnaps() {
   try {
-    const [{ snapshots }, usage] = await Promise.all([api('GET', q('/snapshots')), api('GET', q('/usage'))]);
+    const [{ snapshots }, usage] = await Promise.all([api('GET', q('/snapshots?sizes=1')), api('GET', q('/usage'))]);
     snapList = snapshots;
     $('#usage').innerHTML = stat(usage.snapshots, 'Stände') + stat(fmtMB(usage.bytes) + ' MB', 'belegt auf dem Server') + stat(usage.chunks, 'Chunks');
     $('#selAll').checked = false;
@@ -436,8 +436,9 @@ async function loadSnaps() {
       <td class="mono">${esc(s.id)}${i === 0 ? ' <span class="tag">neuester</span>' : ''}</td>
       <td>${esc(fmtTime(s.createdAt))}</td><td>${esc(s.host + ' / ' + s.user)}</td>
       <td class="num">${s.stats.files}</td><td class="num">${fmtMB(s.stats.bytes)} MB</td>
+      <td class="num">${s.exclusive ? fmtMB(s.exclusive.bytes) + ' MB' : '–'}</td>
       <td class="num"><button class="danger" type="button" data-delsnap="${esc(s.id)}">Löschen</button></td></tr>`).join('')
-      : '<tr><td colspan="7" class="muted">Keine Stände gespeichert.</td></tr>';
+      : '<tr><td colspan="8" class="muted">Keine Stände gespeichert.</td></tr>';
     document.querySelectorAll('#snaps .sel').forEach((c) => c.addEventListener('change', syncSnapButtons));
     document.querySelectorAll('[data-delsnap]').forEach((b) => b.addEventListener('click', () => deleteSnaps([b.dataset.delsnap])));
     syncSnapButtons();
@@ -445,15 +446,18 @@ async function loadSnaps() {
 }
 async function deleteSnaps(ids) {
   if (!ids.length) return;
-  const newest = snapList[0] && ids.includes(snapList[0].id);
+  const newestId = snapList.length ? snapList[0].id : null;
+  const newest = !!newestId && ids.includes(newestId);
+  const free = snapList.filter((s) => ids.includes(s.id)).reduce((a, s) => a + (s.exclusive ? s.exclusive.bytes : 0), 0);
   const text = (ids.length === 1 ? `Stand ${ids[0]} löschen?` : `${ids.length} Stände löschen?`)
-    + (newest ? '\nDarunter ist der neueste Stand; ein Pull holt danach den nächstälteren.' : '')
+    + `\nFrei werden mindestens ${fmtMB(free)} MB.`
     + '\nDas lässt sich nicht rückgängig machen.';
   if (!confirm(text)) return;
+  if (newest && !confirm(`Achtung: ${newestId} ist der neueste, gemeinsame Stand des Kontos.\n\nDanach gilt der nächstältere Stand. PCs, die den gelöschten Stand schon geholt haben, vereinigen beim nächsten Abgleich nur (bei ihnen wird nichts gelöscht) und laden ihre Chats erneut hoch. Das Löschen des neuesten Stands ist deshalb selten sinnvoll.\n\nTrotzdem löschen?`)) return;
   let ok = 0;
   const errors = [];
   for (const id of ids) {
-    try { await api('DELETE', q('/snapshots/' + encodeURIComponent(id))); ok++; } catch (e) { errors.push(`${id}: ${e.message}`); }
+    try { await api('DELETE', q('/snapshots/' + encodeURIComponent(id) + (id === newestId ? '?force=1' : ''))); ok++; } catch (e) { errors.push(`${id}: ${e.message}`); }
   }
   let freed = '';
   try {

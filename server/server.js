@@ -231,7 +231,11 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
       await pipeline(Readable.from(gen), zlib.createGzip({ level: 6 }), res);
       return;
     }
-    if (p === '/snapshots' && m === 'GET') return send(res, 200, { user: target, snapshots: (await store.listSnapshots()).map(summary) });
+    if (p === '/snapshots' && m === 'GET') {
+      const all = await store.listSnapshots();
+      const ex = url.searchParams.get('sizes') === '1' ? await store.exclusive() : null;
+      return send(res, 200, { user: target, snapshots: all.map((s, i) => ({ ...summary(s), newest: i === 0, ...(ex ? { exclusive: ex[s.id] } : {}) })) });
+    }
 
     const sm = p.match(/^\/snapshots\/([^/]+)$/);
     if (sm) {
@@ -265,6 +269,11 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
         return send(res, 200, { ok: true, id });
       }
       if (m === 'DELETE') {
+        // Der neueste Stand ist der gemeinsame Stand des Kontos: nur ausdruecklich loeschen
+        const newest = (await store.listSnapshots())[0];
+        if (newest?.id === id && url.searchParams.get('force') !== '1') {
+          throw httpError(409, 'Das ist der neueste, gemeinsame Stand des Kontos. Loeschen nur ausdruecklich (force). Danach gilt der naechstaeltere Stand; PCs, die den geloeschten schon geholt hatten, vereinigen beim naechsten Abgleich nur und laden ihre Chats erneut hoch.');
+        }
         if (!(await store.deleteSnapshot(id))) throw httpError(404, `Snapshot ${id} nicht gefunden`);
         return send(res, 200, { ok: true });
       }

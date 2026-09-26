@@ -127,7 +127,7 @@ async function uploadMissing(client, local, extra, hashes, limitBytes, log) {
   for (const h of fromExtra) await add(h, extra.get(h));
   for (const [abs, { forms, hashes: hs }] of bySource) {
     for await (const c of chunkStream(canonicalSource(abs, forms))) if (hs.delete(c.hash)) await add(c.hash, c.data);
-    if (hs.size) { const e = new Error(`Datei hat sich waehrend des Push geaendert: ${abs}`); e.code = 'CHANGED'; throw e; }
+    if (hs.size) { const e = new Error(`Datei hat sich waehrend des Push geaendert: ${abs}`); e.code = 'CHANGED'; e.abs = abs; throw e; }
   }
   await flush();
   return { chunks, bytes };
@@ -139,25 +139,40 @@ const describe = (decisions) => {
 };
 
 // Gemeinsame Vorbereitung fuer Push und Pull
-export async function prepare(cfg, client, snap, log) {
-  const local = await buildLocalManifest(cfg, log);
+export async function prepare(cfg, client, snap, log, scanOpts = {}) {
+  const local = await buildLocalManifest(cfg, log, scanOpts);
   const rootsHere = Object.keys(cfg.roots);
   const excluded = (p) => cfg.exclude.length && pathBelongsTo(p, cfg.exclude);
   const L = flatten(local.roots);
   const R = new Map([...flatten(snap?.roots || {}, rootsHere)].filter(([, f]) => !excluded(f.p)));
   const base = loadBase(cfg);
-  const B = new Map([...base.files].filter(([k]) => !excluded(k)));
+  let baseFiles = base.files;
+  // Ist der Stand, mit dem dieser PC zuletzt abgeglichen hat, auf dem Server
+  // geloescht (etwa der neueste), passt die Basis nicht mehr zum Konto: dann nur
+  // vereinigen. Sonst wuerde alles, was nur in dem geloeschten Stand hinzukam,
+  // hier geloescht oder zurueckgedreht.
+  let baseMissing = null;
+  if (base.snapshotId && snap && base.snapshotId !== snap.id) {
+    const { snapshots } = await client.listSnapshots();
+    if (!snapshots.some((s) => s.id === base.snapshotId)) {
+      baseMissing = base.snapshotId;
+      baseFiles = new Map();
+      log.warn(`Der Stand ${base.snapshotId}, mit dem dieser PC zuletzt abgeglichen hat, ist auf dem Server geloescht. Dieser Abgleich vereinigt deshalb nur: hier wird nichts geloescht, und Loeschungen anderer PCs kommen diesmal nicht an.`);
+    }
+  }
+  const B = new Map([...baseFiles].filter(([k]) => !excluded(k)));
   const decisions = decide(L, R, B);
-  return { local, L, R, decisions };
+  return { local, L, R, decisions, baseMissing };
 }
 
 export async function syncPush(cfg, opts, log) {
   const client = new Client(cfg.server, cfg.token);
   await client.health();
+  const forget = new Set(); // Dateien, deren gecachter Hash nicht mehr stimmt
   for (let attempt = 1; ; attempt++) {
     const snap = await fetchLatest(client);
     log.info(`Scanne lokalen Zustand (Home ${cfg.home}) ...`);
-    const { local, L, R, decisions } = await prepare(cfg, client, snap, log);
+    const { local, L, R, decisions } = await prepare(cfg, client, snap, log, { rehash: opts.rehash, forget });
     const ex = local.stats.excluded ? `, ${local.stats.excluded} Dateien des Clyde-Chats ausgelassen` : '';
     log.info(`  ${local.stats.files} Dateien, ${fmtBytes(local.stats.bytes)} (${local.stats.hashedFiles} neu gehasht${ex})`);
     const extra = await resolveUnions(decisions, (d) => localCanonical(cfg, d.l), (d) => remoteContent(client, d.r));
@@ -182,7 +197,10 @@ export async function syncPush(cfg, opts, log) {
     for (const r of Object.values(roots)) for (const f of r.files) f.c.forEach((h) => needed.add(h));
     let up;
     try { up = await uploadMissing(client, local, extra, needed, cfg.uploadBatchMiB * 1024 * 1024, log); }
-    catch (e) { if (e.code === 'CHANGED' && attempt < 3) { log.warn(`${e.message}; wird neu erfasst.`); continue; } throw e; }
+    catch (e) {
+      if (e.code === 'CHANGED' && attempt < 3) { forget.add(e.abs); log.warn(`${e.message}; wird neu gehasht und erneut erfasst.`); continue; }
+      throw e;
+    }
     const { collectProjects } = await import('./commands.js');
     const manifest = {
       version: MANIFEST_VERSION, id: makeId(), createdAt: new Date().toISOString(), parent: snap?.id || null,
@@ -196,6 +214,8 @@ export async function syncPush(cfg, opts, log) {
     try { await client.putSnapshot(manifest); }
     catch (e) {
       if (/HTTP 409/.test(e.message) && /geaendert|geändert/.test(e.message) && attempt < 3) { log.warn('Ein anderer PC hat gerade hochgeladen; fuehre erneut zusammen ...'); continue; }
+      // Aufraeumen (gc) auf dem Server hat inzwischen Chunks entfernt: erneut hochladen
+      if (/HTTP 409/.test(e.message) && /fehlen/.test(e.message) && attempt < 3) { log.warn('Auf dem Server fehlen Chunks (gerade aufgeraeumt?); lade erneut hoch ...'); continue; }
       if (/HTTP 400/.test(e.message) && /Manifest ungueltig/.test(e.message)) throw new Error(`Der Server kennt das Stand-Format v${MANIFEST_VERSION} noch nicht. Server aktualisieren (git pull, dann docker compose up -d --build) und erneut pushen.`);
       throw e;
     }
@@ -215,10 +235,13 @@ export function localPlan(cfg, decisions, snap) {
     if (!root) continue;
     const lp = localize(d.p, cfg.forms);
     const moved = d.l && d.local !== 'delete' && d.l.lp !== lp;
-    if (d.local === 'delete') { plan.delete.push({ root: d.root, p: d.p, lp: d.l.lp, abs: absFor(root, d.l.lp) }); continue; }
+    // seen: Stand der lokalen Datei beim Scan; hat sie sich bis zum Schreiben
+    // geaendert, laesst der Pull sie aus, statt die Aenderung zu ueberschreiben
+    const seen = d.l ? { m: d.l.m, ct: d.l.ct } : null;
+    if (d.local === 'delete') { plan.delete.push({ root: d.root, p: d.p, lp: d.l.lp, abs: absFor(root, d.l.lp), seen }); continue; }
     if (d.local === 'write' || moved) {
       const f = d.local === 'write' ? d.merged : d.l;
-      plan.write.push({ root: d.root, p: d.p, lp, s: f.s, m: f.m, c: f.c, abs: absFor(root, lp), isNew: !d.l });
+      plan.write.push({ root: d.root, p: d.p, lp, s: f.s, m: f.m, c: f.c, abs: absFor(root, lp), isNew: !d.l, seen: moved ? null : seen });
       plan.bytesToWrite += f.s;
       if (moved) plan.delete.push({ root: d.root, p: d.p, lp: d.l.lp, abs: absFor(root, d.l.lp) });
     } else {

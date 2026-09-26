@@ -18,7 +18,7 @@ import { clydeHome } from './paths.js';
 import { chunkStream } from './chunker.js';
 
 export const sigOf = (f) => (f ? `${f.s}:${f.c.join(',')}` : null);
-const keyOf = (root, p) => `${root}\u0000${p}`;
+export const keyOf = (root, p) => `${root}\u0000${p}`;
 
 // Basis je PC: gespeichert pro Satz lokaler Pfade, damit mehrere Clyde-Installationen
 // (oder Tests) mit eigenem Stand nicht durcheinandergeraten
@@ -32,10 +32,13 @@ export function loadBase(cfg) {
     return { snapshotId: j.snapshotId || null, files: new Map(Object.entries(j.files || {})) };
   } catch { return { snapshotId: null, files: new Map() }; }
 }
-export function saveBase(cfg, filesMap, snapshotId) {
+// keep: Map Schluessel -> Signatur (oder null), die statt filesMap gelten (Dateien,
+// die ein Pull nicht schreiben konnte, behalten ihre alte Basis)
+export function saveBase(cfg, filesMap, snapshotId, keep = null) {
   fs.mkdirSync(clydeHome(), { recursive: true });
   const files = {};
   for (const [k, f] of filesMap) files[k] = sigOf(f);
+  for (const [k, sig] of keep || []) { if (sig) files[k] = sig; else delete files[k]; }
   const tmp = `${baseFile(cfg)}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify({ version: 1, snapshotId, savedAt: new Date().toISOString(), files }));
   fs.renameSync(tmp, baseFile(cfg));

@@ -46,13 +46,13 @@ export async function walkDir(rootAbs) {
           links.push({ p: erel, t: cleanLinkTarget(await fs.promises.readlink(eabs)) });
           await rec(erel);
         } else if (st.isFile()) {
-          files.push({ p: erel, abs: eabs, s: st.size, m: st.mtimeMs });
+          files.push({ p: erel, abs: eabs, s: st.size, m: st.mtimeMs, ct: st.ctimeMs });
         }
       } else if (e.isDirectory()) {
         await rec(erel);
       } else if (e.isFile()) {
         const st = await fs.promises.stat(eabs);
-        files.push({ p: erel, abs: eabs, s: st.size, m: st.mtimeMs });
+        files.push({ p: erel, abs: eabs, s: st.size, m: st.mtimeMs, ct: st.ctimeMs });
       }
     }
   }
@@ -68,10 +68,12 @@ export function saveCache(c) {
   fs.writeFileSync(cachePath(), JSON.stringify(c));
 }
 
-// Erfasst alle Roots, hasht geaenderte Dateien (Cache nach Groesse, mtime und
-// Regel-Signatur) und liefert Manifest-Roots (kanonische Pfade und Inhalte) plus
-// einen Index Hash -> lokale Fundstelle.
-export async function buildLocalManifest(cfg, log) {
+// Erfasst alle Roots, hasht geaenderte Dateien und liefert Manifest-Roots
+// (kanonische Pfade und Inhalte) plus einen Index Hash -> lokale Fundstelle.
+// Cache-Treffer nur bei gleicher Groesse, mtime, ctime und Regel-Signatur: ctime
+// aendert sich bei jedem Schreiben, auch wenn danach mtime zurueckgesetzt wird.
+// rehash: Cache ganz ignorieren; forget: Set absoluter Pfade, die neu zu hashen sind.
+export async function buildLocalManifest(cfg, log, { rehash = false, forget = null } = {}) {
   const oldCache = loadCache();
   const cache = {};
   const roots = {};
@@ -90,7 +92,7 @@ export async function buildLocalManifest(cfg, log) {
       continue;
     }
     if (root.kind === 'file') {
-      if (st.isFile()) entries = [{ p: path.basename(root.path), abs: root.path, s: st.size, m: st.mtimeMs }];
+      if (st.isFile()) entries = [{ p: path.basename(root.path), abs: root.path, s: st.size, m: st.mtimeMs, ct: st.ctimeMs }];
     } else if (st.isDirectory()) {
       ({ files: entries, links } = await walkDir(root.path));
     }
@@ -109,7 +111,8 @@ export async function buildLocalManifest(cfg, log) {
       let chunks;
       let csize;
       let stale;
-      if (c && c.s === f.s && c.m === f.m && c.fk === fk && typeof c.cs === 'number') {
+      const fresh = rehash || (forget && forget.has(f.abs));
+      if (!fresh && c && c.s === f.s && c.m === f.m && c.ct === f.ct && c.fk === fk && typeof c.cs === 'number') {
         chunks = c.c;
         csize = c.cs;
         stale = !!c.st;
@@ -118,12 +121,12 @@ export async function buildLocalManifest(cfg, log) {
         stats.hashedFiles++;
         stats.hashedBytes += f.s;
       }
-      cache[key] = { s: f.s, m: f.m, c: chunks, cs: csize, fk, st: stale };
+      cache[key] = { s: f.s, m: f.m, ct: f.ct, c: chunks, cs: csize, fk, st: stale };
       if (stale) stats.stale++;
       chunks.forEach((h, i) => {
         if (!chunkIndex.has(h)) chunkIndex.set(h, { abs: f.abs, index: i, forms, size: chunkSizeAt(csize, i) });
       });
-      files.push({ p: canonicalize(f.p, cfg.forms), lp: f.p, s: csize, m: f.m, c: chunks, stale });
+      files.push({ p: canonicalize(f.p, cfg.forms), lp: f.p, s: csize, m: f.m, ct: f.ct, c: chunks, stale });
       stats.files++;
       stats.bytes += f.s;
     }

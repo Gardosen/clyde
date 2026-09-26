@@ -44,10 +44,10 @@ export class Client {
   health() { return this.json('GET', '/health'); }
   me() { return this.json('GET', '/me'); }
   missing(hashes) { return this.json('POST', '/blobs/missing', { hashes }); }
-  listSnapshots() { return this.json('GET', '/snapshots'); }
+  listSnapshots({ sizes = false } = {}) { return this.json('GET', sizes ? '/snapshots?sizes=1' : '/snapshots'); }
   getSnapshot(id) { return this.json('GET', `/snapshots/${encodeURIComponent(id)}`); }
   putSnapshot(m) { return this.json('PUT', `/snapshots/${encodeURIComponent(m.id)}`, m); }
-  deleteSnapshot(id) { return this.json('DELETE', `/snapshots/${encodeURIComponent(id)}`); }
+  deleteSnapshot(id, { force = false } = {}) { return this.json('DELETE', `/snapshots/${encodeURIComponent(id)}${force ? '?force=1' : ''}`); }
   gc() { return this.json('POST', '/gc'); }
 
   // blobs: (async) Iterable von {hash, data}; wird gerahmt und gzip-komprimiert gestreamt

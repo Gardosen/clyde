@@ -69,6 +69,7 @@ The plugin is the client counterpart to the backend. It runs in a dedicated
 | `/clyde:push` | Adds this computer's changes to the account's collection |
 | `/clyde:pull` | Fetches new and changed chats from the other computers; asks about missing project folders |
 | `/clyde:status` | Latest snapshot, what is waiting to be pushed or pulled, busy chats |
+| `/clyde:delete [id ...]` | Lists the stored snapshots with the space each would free, deletes the chosen ones after confirmation and cleans up |
 
 How it behaves:
 
@@ -226,12 +227,22 @@ interface is currently in German; the tab names are given in brackets.
 - **Access for computers** (*Zugang für PCs*): create and revoke your own client
   tokens. A token is shown only once, together with the ready-made `clyde init`
   command.
-- **Snapshots** (*Stände*): all stored snapshots with date, source computer and
-  size, plus the space actually used on the server. Delete single or selected
-  snapshots, or keep only the newest N. The server then removes chunks no
-  snapshot needs any more and reports the space freed. Chunks younger than one
-  hour are kept so that a push in progress loses nothing; they go at the next
-  cleanup.
+- **Snapshots** (*Stände*): all stored snapshots with date, source computer,
+  size and the space deleting each would free at least (chunks only it uses),
+  plus the space actually used on the server. Delete single or selected
+  snapshots, or keep only the newest N, each after confirmation. The server then
+  removes chunks no snapshot needs any more and reports the space freed. Chunks
+  younger than one hour are kept so that a push in progress loses nothing; they
+  go at the next cleanup. Should a cleanup still remove chunks a push is about to
+  reference, that push uploads them again and retries.
+
+  Deleting older snapshots is safe. Each computer keeps its sync base locally;
+  if the snapshot it last synced with is gone, its next sync only combines: it
+  deletes nothing locally, and deletions made on other computers do not reach it
+  that one time. The newest snapshot is the account's shared state. The server
+  deletes it only when asked explicitly (`force`), and the dashboard asks twice.
+  Afterwards the next older snapshot applies, and every computer that already had
+  the deleted one uploads its chats again on its next push.
 - **Account** (*Konto*): change your password; other signed-in browsers are
   signed out.
 - **Users** (*Benutzer*, admins only): create users, set passwords, delete users.
@@ -269,12 +280,14 @@ placeholders, running chats and whether server and token work.
 | `clyde pull ID --exact` | Restore a stored snapshot exactly; local differences are removed |
 | `clyde merge ID ID [...]` | Merge stored snapshots into a new shared state |
 | `clyde status` | What is waiting to be pushed or pulled, busy chats |
-| `clyde list` | Snapshots on the server |
+| `clyde list` | Snapshots on the server, with the space deleting each would free |
 | `clyde map --list` | Show project mappings |
 | `clyde map --add NEUTRAL PATH [--create]` | Add a mapping; check with `--dry-run`, confirm with `--yes` |
 | `clyde map --remove N` | Remove a mapping and move its chats back; `--dry-run` / `--yes` as above |
 | `clyde doctor` | Check the setup |
-| `clyde delete ID`, `clyde gc` | Delete a snapshot, free space |
+| `clyde delete ID [ID ...]` | Delete snapshots and clean up; `--dry-run` shows the effect, `--yes` confirms without a terminal, the newest only with `--force` |
+| `clyde gc` | Free space of chunks no snapshot needs |
+| `--rehash` (push, pull, status) | Ignore the hash cache and hash everything again |
 
 Before every pull Clyde copies the previous state to
 `%USERPROFILE%\.clyde\backups\<timestamp>`; the last three are kept. Backups
@@ -314,7 +327,12 @@ output names the backup folder.
 ## How it works
 
 - **Scan:** every file is converted to the neutral form and split into 4 MiB
-  chunks, each named by its SHA-256. A cache avoids re-hashing unchanged files.
+  chunks, each named by its SHA-256. A cache avoids re-hashing unchanged files;
+  it recognises a file by size, modification time and change time (ctime), so
+  a file rewritten with the same size and a restored modification time is still
+  hashed again. If a push finds a file different from its cached hash, it drops
+  that entry and hashes the file again before retrying. A pull never overwrites
+  or deletes a file that changed after the scan.
 - **Reconcile:** every file is compared three ways: the local state, the
   account's shared state (the latest snapshot) and the state this computer last
   synced (the base, `~/.clyde/base-*.json`). If only one side changed, that side

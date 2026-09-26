@@ -160,8 +160,16 @@ export async function applyPlan({ cfg, local, plan, client, opts, log, extra }) 
   //    temporaer schreiben, atomar umbenennen, mtime uebernehmen
   const cache = loadCache();
   const fkAll = formsKey(cfg);
+  const skipped = [];
+  // Hat sich eine lokale Datei seit dem Scan geaendert (ein Chat schreibt doch),
+  // wird sie nicht ueberschrieben oder geloescht; der naechste Abgleich holt es nach
+  const changedSinceScan = async (f) => {
+    if (!f.seen) return false;
+    try { const st = await fs.promises.stat(f.abs); return st.mtimeMs !== f.seen.m || st.ctimeMs !== f.seen.ct; } catch { return false; }
+  };
   for (const f of plan.write) {
     const root = cfg.roots[f.root];
+    if (await changedSinceScan(f)) { skipped.push(f); log.warn(`${f.root}/${f.lp} hat sich waehrend des Pulls geaendert und bleibt unveraendert.`); continue; }
     const forms = formsFor(cfg, root, f.lp);
     for (const h of f.c) if (!staged.has(h)) throw new Error(`Chunk ${h.slice(0, 12)} fuer ${f.lp} fehlt`);
     await fs.promises.mkdir(path.dirname(f.abs), { recursive: true });
@@ -171,7 +179,7 @@ export async function applyPlan({ cfg, local, plan, client, opts, log, extra }) 
     await fs.promises.rename(tmp, f.abs);
     await fs.promises.utimes(f.abs, new Date(), new Date(f.m));
     const st = await fs.promises.stat(f.abs);
-    cache[`${root.path}|${f.lp}`] = { s: st.size, m: st.mtimeMs, c: f.c, cs: f.s, fk: forms.length ? fkAll : '-', st: false };
+    cache[`${root.path}|${f.lp}`] = { s: st.size, m: st.mtimeMs, ct: st.ctimeMs, c: f.c, cs: f.s, fk: forms.length ? fkAll : '-', st: false };
     log.debug(`geschrieben ${f.root}/${f.lp}`);
   }
 
@@ -179,6 +187,7 @@ export async function applyPlan({ cfg, local, plan, client, opts, log, extra }) 
   const rootSet = new Set(Object.values(cfg.roots).map((r) => path.resolve(r.path)));
   const parents = new Set();
   for (const d of plan.delete) {
+    if (await changedSinceScan(d)) { skipped.push(d); log.warn(`${d.root}/${d.lp} hat sich waehrend des Pulls geaendert und wird nicht geloescht.`); continue; }
     await fs.promises.rm(d.abs, { force: true });
     delete cache[`${cfg.roots[d.root].path}|${d.lp}`];
     parents.add(path.dirname(d.abs));
@@ -188,5 +197,5 @@ export async function applyPlan({ cfg, local, plan, client, opts, log, extra }) 
   saveCache(cache);
 
   await fs.promises.rm(chunkDir, { recursive: true, force: true });
-  return { downloadedChunks, downloadedBytes, backupDir, written: plan.write.length, deleted: plan.delete.length };
+  return { downloadedChunks, downloadedBytes, backupDir, written: plan.write.length - skipped.filter((s) => plan.write.includes(s)).length, deleted: plan.delete.length - skipped.filter((s) => plan.delete.includes(s)).length, skipped };
 }
