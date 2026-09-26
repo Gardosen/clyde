@@ -70,6 +70,9 @@ dabei lokale Abweichungen; nur nutzen, wenn der Nutzer das ausdruecklich will.)
    - Abbruch, weil andere Chats arbeiten: die Chats nennen, spaeter erneut
      `/clyde:pull`. Nicht mit `--force` wiederholen, ausser der Nutzer verlangt es.
    - Nicht eingerichtet: auf `/clyde:setup` verweisen.
+   - Abbruch „Dieses Clyde ... ist zu alt fuer den Server": den genannten
+     Aktualisierungsbefehl weitergeben; nicht erneut versuchen.
+   - Warnungen zur Version (veraltetes Clyde oder aelterer Server) im Bericht nennen.
 
 5. **Ergebnis melden:** wie viele Chats neu oder aktualisiert sind, wie viele
    eigene Aenderungen noch hochzuladen sind (dann `/clyde:push` empfehlen), Ort

@@ -68,6 +68,9 @@ Projekt: https://github.com/Gardosen/clyde
      Nutzer verlangt es ausdruecklich.
    - Nicht eingerichtet (Meldung verweist auf `clyde init`): auf `/clyde:setup`
      verweisen.
+   - Abbruch „Dieses Clyde ... ist zu alt fuer den Server": den genannten
+     Aktualisierungsbefehl weitergeben; nicht erneut versuchen.
+   - Warnungen zur Version (veraltetes Clyde oder aelterer Server) im Bericht nennen.
 
 5. **Ergebnis melden:** kurz
    - was nachgereicht wurde (committet, gepusht, Repos dazu oder ignoriert)

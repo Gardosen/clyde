@@ -16,6 +16,7 @@ import { fmtBytes } from './log.js';
 import { syncPush, prepare, localPlan, fetchLatest, resolveUnions, describe, remoteContent, localCanonical, projectChats } from './sync.js';
 import { flatten, saveBase, loadBase, keyOf } from './merge.js';
 import { changeMapping } from './remap.js';
+import { checkVersions } from './version.js';
 import { sidebarCwds, gitAvailable, clonableRoots, planRepos, describeRepoPlan, applyRepos } from './repos.js';
 import { isUnder } from './remap.js';
 
@@ -232,6 +233,7 @@ async function finishPull({ cfg, opts, log, snap, local, plan, client, extra, su
 export async function pull(cfg, opts, log) {
   if (opts.clydeChat) cfg = registerClydeChat(cfg, log);
   const client = new Client(cfg.server, cfg.token);
+  checkVersions(await client.health(), log);
   const snap = await fetchLatest(client, opts.id);
   if (!snap) { log.info('Auf dem Server liegt noch kein Stand. Erst auf einem PC "clyde push" ausfuehren.'); return { changed: false }; }
   log.info(`${opts.exact ? 'Stand' : 'Gemeinsamer Stand'} ${snap.id}, zuletzt von ${snap.host} (${snap.user}), ${snap.createdAt}: ${snap.stats.files} Dateien, ${fmtBytes(snap.stats.bytes)}`);

@@ -12,6 +12,7 @@ import { loadBase, saveBase, flatten, decide, unionLines, chunksOf, sigOf } from
 import { fmtBytes } from './log.js';
 import { collectRepos, mergeRepos, reposSignature } from './repos.js';
 import { saveConfig } from './config.js';
+import { checkVersions } from './version.js';
 
 // v3 (0.4.2): woertliche Platzhalter im Inhalt sind maskiert (@@CLYDE_ESC_).
 // Staende v2 lassen sich weiter lesen; Clyde < 0.4.2 lehnt v3 ab und kann so
@@ -186,7 +187,7 @@ export async function prepare(cfg, client, snap, log, scanOpts = {}) {
 
 export async function syncPush(cfg, opts, log) {
   const client = new Client(cfg.server, cfg.token);
-  await client.health();
+  checkVersions(await client.health(), log);
   // Git-Repos der Projektordner (Remote, Branch, Commit); Warnungen einmal zeigen
   const mine = opts.noRepos ? null : await collectRepos(cfg, log);
   for (const w of mine?.warnings || []) log.warn(w);

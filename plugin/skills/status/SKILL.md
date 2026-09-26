@@ -1,6 +1,6 @@
 ---
 name: status
-description: Clyde-Ueberblick - letzter Snapshot auf dem Server, lokale Aenderungen seit dem letzten Sync, welche Chats gerade arbeiten. Nur auf ausdruecklichen Aufruf.
+description: Clyde-Ueberblick - Versionen von Clyde und Server, letzter Snapshot auf dem Server, lokale Aenderungen seit dem letzten Sync, welche Chats gerade arbeiten. Nur auf ausdruecklichen Aufruf.
 disable-model-invocation: true
 allowed-tools: Bash(clyde:*)
 ---
@@ -11,6 +11,10 @@ Projekt: https://github.com/Gardosen/clyde
 
 1. `clyde status` ausfuehren.
 2. Knapp berichten:
+   - Versionen (erste Zeile: Clyde auf diesem PC, Server). Jede Warnung zur Version
+     mit dem genannten Befehl weitergeben: ist dieses Clyde veraltet, den
+     `npm install`-Befehl und die Plugin-Aktualisierung empfehlen; ist der Server
+     aelter, das Server-Update (git pull, docker compose up -d --build).
    - neuester Snapshot auf dem Server und von welchem PC
    - was hier zuletzt passiert ist (push oder pull)
    - lokale Aenderungen seit dem letzten Sync

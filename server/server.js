@@ -28,6 +28,8 @@ function hashList(body) {
   return hashes;
 }
 const summary = (m) => ({ id: m.id, createdAt: m.createdAt, host: m.host, user: m.user, platform: m.platform, stats: m.stats });
+// Aeltester Client, mit dem dieser Server sicher arbeitet (Stand-Format v3 ab 0.4.2)
+const MIN_CLIENT = '0.4.2';
 const VERSION = (() => { try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch { return 'unbekannt'; } })();
 
 const HTML_HEADERS = {
@@ -56,7 +58,8 @@ function migrateLegacy(dataDir, adminUser, log) {
 // dataDir: Ablage; token: optionaler Alt-Token (gilt als Client-Token des Admins);
 // adminUser/adminPassword: legen beim ersten Start den Admin an
 // gcGraceMs: Schutzfrist fuer unreferenzierte Chunks beim Aufraeumen (Standard 1 h)
-export function createServer({ dataDir, token, adminUser = 'admin', adminPassword, log = console, loginLimit, gcGraceMs = 3600e3 } = {}) {
+// version/minClient nur fuer Tests ueberschreibbar
+export function createServer({ dataDir, token, adminUser = 'admin', adminPassword, log = console, loginLimit, gcGraceMs = 3600e3, version = VERSION, minClient = MIN_CLIENT } = {}) {
   if (!validUserName(adminUser)) throw new Error(`Ungueltiger Admin-Name "${adminUser}"`);
   fs.mkdirSync(dataDir, { recursive: true });
   migrateLegacy(dataDir, adminUser, log);
@@ -101,7 +104,7 @@ export function createServer({ dataDir, token, adminUser = 'admin', adminPasswor
     const m = req.method;
     const secure = isSecure(req);
 
-    if (p === '/health' && m === 'GET') return send(res, 200, { ok: true, service: 'clyde', version: VERSION });
+    if (p === '/health' && m === 'GET') return send(res, 200, { ok: true, service: 'clyde', version, minClient });
     if ((p === '/' || p === '/dashboard') && m === 'GET') {
       const html = dashboardHtml();
       res.writeHead(200, { ...HTML_HEADERS, 'content-length': html.length });
